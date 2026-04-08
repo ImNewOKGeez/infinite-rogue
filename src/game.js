@@ -1,10 +1,19 @@
-import { initHUD, updateHUD, showOverlay, hideOverlay, setSurge } from './hud.js';
+import { initHUD, updateHUD, showOverlay, hideOverlay, setSurge, setBossBar } from './hud.js';
 import { initInput, initJoystick, jDir } from './input.js';
-import { mkPlayer } from './player.js';
-import { enemies, resetEnemies, spawnEnemy, pruneEnemies, dist2, nearest } from './enemies.js';
+import { CHARACTERS, mkPlayer } from './player.js';
+import { enemies, resetEnemies, spawnEnemy, pruneEnemies, dist2, nearest, setExtraTarget, clearExtraTarget } from './enemies.js';
 import { WDEFS, bullets, resetBullets, triggerOverload } from './weapons.js';
 import { PASSIVES, buildPool, applyUpgrade } from './upgrades.js';
-import { particles, updateParticles, addRing, addBurst, addDot, drawParticles } from './particles.js';
+import { updateParticles, addRing, addBurst, addDot, drawParticles } from './particles.js';
+import { mkBoss, updateBoss, drawBoss, hitBoss, BOSS_SPAWN_TIME, BOSS_RESPAWN_DELAY } from './boss.js';
+import {
+  initAudio, resumeAudio,
+  playCryoFire, playPulseFire, playEmpFire,
+  playHit, playEnemyDeath, playPlayerHit, playDodge,
+  playLevelUp, playXp, playSurge, playDeath,
+  playBossWarning, playBossPhaseTwo, playBossDeath,
+  startBossMusic, stopBossMusic,
+} from './audio.js';
 
 export class Game {
   constructor() {
@@ -21,6 +30,15 @@ export class Game {
     this.surgeTimer = 0;
     this.nextSurge = 40;
     this._st = 0;
+    this._lastHitSound = 0;
+    this._lastXpSound = 0;
+    this.surgeFlashT = 0;
+    this.boss = null;
+    this.bossWarned = false;
+    this.bossIntro = false;
+    this.bossIntroT = 0;
+    this.nextBossTime = BOSS_SPAWN_TIME;
+    this.bossRespawnT = 0;
   }
 
   start() {
@@ -29,6 +47,7 @@ export class Game {
     this.ctx = canvas.getContext('2d');
     this.resize();
     window.addEventListener('resize', () => this.resize());
+    window.addEventListener('touchstart', resumeAudio, { passive: true });
     initInput();
     initJoystick(
       document.getElementById('joystick-zone'),
@@ -44,7 +63,9 @@ export class Game {
     this.H = canvas.height = window.innerHeight;
   }
 
-  newRun() {
+  newRun(char = CHARACTERS.ghost) {
+    initAudio();
+    resumeAudio();
     resetEnemies();
     resetBullets();
     this.gems = [];
@@ -55,9 +76,20 @@ export class Game {
     this.surgeTimer = 0;
     this.nextSurge = 40;
     this._st = 0;
-    this.P = mkPlayer(this.W, this.H);
+    this._lastHitSound = 0;
+    this._lastXpSound = 0;
+    this.surgeFlashT = 0;
+    this.boss = null;
+    this.bossWarned = false;
+    this.bossIntro = false;
+    this.bossIntroT = 0;
+    this.nextBossTime = BOSS_SPAWN_TIME;
+    this.bossRespawnT = 0;
+    this.P = mkPlayer(this.W, this.H, char);
     this.running = true;
     this.paused = false;
+    clearExtraTarget();
+    setBossBar(null);
     hideOverlay();
     this.lt = performance.now();
     requestAnimationFrame(ts => this.loop(ts));
@@ -65,7 +97,7 @@ export class Game {
 
   loop(ts) {
     if (!this.running) return;
-    const dt = Math.min((ts - this.lt) / 1000, 0.05);
+    const dt = Math.min((ts - this.lt) / 1000, 0.033);
     this.lt = ts;
     if (!this.paused) { this.gt += dt; this.update(dt); }
     this.draw();
@@ -83,19 +115,55 @@ export class Game {
     P.y = cl(P.y + jDir.y * P.spd * dt, P.r, H - P.r);
     if (P.invT > 0) P.invT -= dt;
 
-    // surge
+    this._updateSurge(dt);
+    this._spawnEnemies(dt);
+    this._updateBoss(dt);
+    this._fireWeapons(dt);
+    this._updateBullets(dt);
+    this._updateEnemies(dt);
+    this._updateGems(dt);
+
+    updateParticles(dt);
+    this.dmgNums = this.dmgNums.filter(d => { d.y -= 40 * dt; d.life -= dt; return d.life > 0; });
+    updateHUD(P, this.gt, WDEFS);
+    setBossBar(this.boss);
+  }
+
+  _updateSurge(dt) {
+    const bossFight = this.bossIntro || (this.boss && this.boss.alive);
+
+    // cancel active surge if boss fight starts
+    if (bossFight && this.surgeActive) {
+      this.surgeActive = false;
+      this.surgeFlashT = 0;
+      setSurge(false);
+    }
+
+    // suppress surge activation during boss intro/fight, and push nextSurge forward so
+    // it doesn't fire the moment the boss dies
+    if (bossFight) {
+      if (this.gt >= this.nextSurge) this.nextSurge = this.gt + 40;
+      return;
+    }
+
     if (this.gt >= this.nextSurge && !this.surgeActive) {
       this.surgeActive = true;
       this.surgeTimer = 8 + Math.floor(this.gt / 60) * 3;
       this.nextSurge += 40;
+      this.surgeFlashT = 1.8;
       setSurge(true);
+      playSurge();
     }
     if (this.surgeActive) {
       this.surgeTimer -= dt;
       if (this.surgeTimer <= 0) { this.surgeActive = false; setSurge(false); }
     }
+    if (this.surgeFlashT > 0) this.surgeFlashT -= dt;
+  }
 
-    // spawn
+  _spawnEnemies(dt) {
+    // no spawning during boss intro or while boss is alive
+    if (this.bossIntro || (this.boss && this.boss.alive)) return;
     this._st += dt;
     const wave = this.gt / 45;
     const baseRate = Math.max(0.06, 0.9 - this.gt / 110);
@@ -103,44 +171,224 @@ export class Game {
     if (this._st >= rate) {
       this._st = 0;
       const batch = this.surgeActive ? Math.ceil(1 + wave * 0.5) : 1;
-      for (let i = 0; i < batch; i++) spawnEnemy(this.gt, W, H);
+      for (let i = 0; i < batch; i++) spawnEnemy(this.gt, this.W, this.H);
+    }
+  }
+
+  _updateBoss(dt) {
+    const { W, H } = this;
+
+    // warning 5s before intro
+    if (!this.bossWarned && this.gt >= this.nextBossTime - 5 && !this.boss && !this.bossIntro) {
+      this.bossWarned = true;
+      this.addDN(W / 2, H / 2 - 60, '⚠ SIGNAL INCOMING', '#E24B4A', 2.5, true);
+      playBossWarning();
     }
 
-    // fire weapons
+    // trigger intro — clear field, start music and countdown
+    if (!this.boss && !this.bossIntro && this.gt >= this.nextBossTime) {
+      this.bossIntro = true;
+      this.bossIntroT = 3.5;
+      this.bossWarned = false;
+      resetEnemies();
+      for (let i = bullets.length - 1; i >= 0; i--) {
+        if (bullets[i].enemy) bullets.splice(i, 1);
+      }
+      startBossMusic();
+    }
+
+    // tick intro countdown
+    if (this.bossIntro) {
+      this.bossIntroT -= dt;
+      if (this.bossIntroT <= 0) {
+        this.bossIntro = false;
+        this.boss = mkBoss(this.gt, W, H);
+        setExtraTarget(this.boss); // weapons now lock onto boss
+      }
+      return; // boss not active yet during intro
+    }
+
+    // dead boss — show upgrade screen then schedule respawn
+    if (this.boss && !this.boss.alive) {
+      this.bossRespawnT -= dt;
+      if (this.bossRespawnT <= 0) {
+        this.boss = null;
+        this.nextBossTime = this.gt + BOSS_RESPAWN_DELAY;
+        this.bossWarned = false;
+      }
+      return;
+    }
+
+    if (!this.boss) return;
+
+    updateBoss(
+      this.boss, this.P, dt, bullets,
+      // onHitPlayer
+      (dmg) => {
+        if (this.P.invT > 0) return;
+        if (Math.random() > this.P.dodge) {
+          this.P.hp -= dmg; this.P.invT = 0.7; this.shake.t = 0.25;
+          playPlayerHit();
+          if (this.P.hp <= 0) { this.P.hp = 0; this.endGame(); }
+        } else {
+          this.addDN(this.P.x, this.P.y - 20, 'DODGE', this.P.col, 0.55);
+          playDodge();
+        }
+      },
+      // onSpawnBullet
+      (x, y, vx, vy, r, dmg, col) => {
+        bullets.push({ x, y, vx, vy, r, dmg, col, life: 3.5, pl: 0, enemy: true, meta: {} });
+      },
+      // onPhaseTwo
+      () => {
+        this.shake.t = 0.5;
+        this.addDN(W / 2, H / 2 - 60, '!! SIGNAL ENRAGED !!', '#D4537E', 2.5, true);
+        playBossPhaseTwo();
+      }
+    );
+
+    // check death
+    if (this.boss.hp <= 0 && this.boss.alive) {
+      this.boss.alive = false;
+      this.bossRespawnT = BOSS_RESPAWN_DELAY;
+      this.killCount++;
+      this.gems.push({ x: this.boss.x, y: this.boss.y, r: 5, val: this.boss.xp });
+      for (let i = 0; i < 8; i++) {
+        const a = (i / 8) * Math.PI * 2;
+        this.gems.push({ x: this.boss.x + Math.cos(a) * 30, y: this.boss.y + Math.sin(a) * 30, r: 5, val: 10 });
+      }
+      addBurst(this.boss.x, this.boss.y, this.boss.col, 24, 160, 6, 0.9);
+      addRing(this.boss.x, this.boss.y, 120, '#fff', 3, 0.7);
+      addRing(this.boss.x, this.boss.y, 180, this.boss.col, 2, 0.9);
+      this.shake.t = 0.6;
+      clearExtraTarget(); // weapons stop targeting boss
+      stopBossMusic();
+      playBossDeath();
+      this._showBossUpgrade();
+    }
+  }
+
+  _showBossUpgrade() {
+    this.paused = true;
+    const pool = buildPool(this.P, WDEFS);
+    const cards = pool.map(u => {
+      if (u.type === 'wep') {
+        const w = WDEFS[u.wid];
+        const stats = wStats(u.wid, u.lvl, this.P);
+        return `<div class="uc wep" onclick="window.__game.pickBossUpgrade('${u.id}')">
+          <div class="ut">◈ WEAPON</div>
+          <div class="un">${w.icon} ${w.name} T${u.lvl}</div>
+          <div class="ud">${wDesc(u.wid, u.lvl)}</div>
+          <div class="us">${stats.join('<br>')}</div></div>`;
+      }
+      const preview = u.apply ? (() => { const c = { ...this.P }; return u.apply(c); })() : [];
+      return `<div class="uc pas" onclick="window.__game.pickBossUpgrade('${u.id}')">
+        <div class="ut">◆ PASSIVE</div>
+        <div class="un">${u.label}</div>
+        <div class="us">${preview.join('<br>')}</div></div>`;
+    }).join('');
+    showOverlay(`
+      <div style="color:#E24B4A;font-size:9px;letter-spacing:3px;margin-bottom:6px">// SIGNAL TERMINATED //</div>
+      <div style="font-size:15px;color:#E24B4A;letter-spacing:2px;margin-bottom:4px">BOSS DEFEATED</div>
+      <div style="font-size:9px;color:#444;letter-spacing:2px;margin-bottom:18px">choose your reward</div>
+      <div class="upg-grid">${cards}</div>`);
+  }
+
+  pickBossUpgrade(id) {
+    applyUpgrade(id, this.P);
+    hideOverlay();
+    this.paused = false;
+    if (this.P.xp >= this.P.xpNext) { const v = this.P.xp; this.P.xp = 0; this.addXp(v); }
+  }
+
+  _fireWeapons(dt) {
+    const P = this.P;
+    // smart callback: route boss vs regular enemy
+    const onHit = (e, d, c, big) => {
+      if (e === this.boss) this._doBossHit(d, c, big);
+      else this.hitEnemy(e, d, c, big);
+    };
     Object.keys(P.w).forEach(wid => {
       const w = WDEFS[wid]; if (!w.fire) return;
       P.ft[wid] = (P.ft[wid] || 0) + dt;
       const r = w.getRate(P);
-      if (r > 0 && P.ft[wid] >= 1 / r) { P.ft[wid] = 0; w.fire(P, (e, d, c, big) => this.hitEnemy(e, d, c, big)); }
+      if (r > 0 && P.ft[wid] >= 1 / r) {
+        P.ft[wid] = 0;
+        w.fire(P, onHit);
+        if (wid === 'cryo') playCryoFire();
+        else if (wid === 'pulse') playPulseFire();
+        else if (wid === 'emp') playEmpFire();
+      }
     });
-    if (P.w.swarm) WDEFS.swarm.tick(P, dt, (e, d, c) => this.hitEnemy(e, d, c));
+    if (P.w.swarm) WDEFS.swarm.tick(P, dt, onHit);
+  }
 
-    // bullets
+  _updateBullets(dt) {
+    const { P, W, H } = this;
     for (let i = bullets.length - 1; i >= 0; i--) {
       const b = bullets[i];
       b.x += b.vx * dt; b.y += b.vy * dt; b.life -= dt;
       if (b.life < 0 || b.x < -80 || b.x > W + 80 || b.y < -80 || b.y > H + 80) { bullets.splice(i, 1); continue; }
+
+      // enemy bullets hit player
+      if (b.enemy) {
+        if (dist2(b, P) < (b.r + P.r) ** 2 && P.invT <= 0) {
+          if (Math.random() > P.dodge) {
+            P.hp -= b.dmg; P.invT = 0.7; this.shake.t = 0.18;
+            playPlayerHit();
+            if (P.hp <= 0) { P.hp = 0; this.endGame(); }
+          } else {
+            this.addDN(P.x, P.y - 20, 'DODGE', P.col, 0.55);
+            playDodge();
+          }
+          bullets.splice(i, 1);
+        }
+        continue;
+      }
+
+      // player bullets — check boss first, then enemies
       if (b.meta?.type === 'cryo') addDot(b.x, b.y, '#00CFFF44', 2.5, 0.15);
+
       let alive = true;
-      for (let j = enemies.length - 1; j >= 0; j--) {
-        const e = enemies[j];
-        if (dist2(b, e) < (b.r + e.r) ** 2) {
-          let dmg = b.dmg;
-          const syn = b.meta?.type === 'pulse' && e.frozen;
-          if (syn) dmg *= 3.5;
-          this.hitEnemy(e, dmg, b.col, syn);
-          if (b.meta?.freeze) { e.frozen = true; e.frozenT = 2.0; e.slowT = 0; }
-          else if (b.meta?.slow) { e.slowT = 2; e.spdMult = 0.45; }
-          if (b.meta?.aoe) this.spawnRing(e.x, e.y, 75, b.col, b.dmg * 0.5);
-          b.pl = (b.pl || 0) - 1;
-          if (b.pl < 0) { alive = false; break; }
+
+      // hit boss
+      if (this.boss?.alive && dist2(b, this.boss) < (b.r + this.boss.r) ** 2) {
+        const syn = b.meta?.type === 'pulse' && this.boss.frozen;
+        let dmg = syn ? b.dmg * 3.5 : b.dmg;
+        this._doBossHit(dmg, b.col, syn);
+        // status — halved duration on boss
+        if (b.meta?.freeze) { this.boss.frozen = true; this.boss.frozenT = 1.0; this.boss.slowT = 0; }
+        else if (b.meta?.slow) { this.boss.slowT = 1; this.boss.spdMult = 0.6; }
+        if (b.meta?.aoe) this.spawnRing(b.x, b.y, 75, b.col, b.dmg * 0.5);
+        b.pl = (b.pl || 0) - 1;
+        if (b.pl < 0) { alive = false; }
+      }
+
+      if (alive) {
+        for (let j = enemies.length - 1; j >= 0; j--) {
+          const e = enemies[j];
+          if (dist2(b, e) < (b.r + e.r) ** 2) {
+            let dmg = b.dmg;
+            const syn = b.meta?.type === 'pulse' && e.frozen;
+            if (syn) dmg *= 3.5;
+            this.hitEnemy(e, dmg, b.col, syn);
+            if (b.meta?.freeze) { e.frozen = true; e.frozenT = 2.0; e.slowT = 0; }
+            else if (b.meta?.slow) { e.slowT = 2; e.spdMult = 0.45; }
+            if (b.meta?.aoe) this.spawnRing(e.x, e.y, 75, b.col, b.dmg * 0.5);
+            b.pl = (b.pl || 0) - 1;
+            if (b.pl < 0) { alive = false; break; }
+          }
         }
       }
+
       pruneEnemies();
       if (!alive) bullets.splice(i, 1);
     }
+  }
 
-    // enemies move + contact
+  _updateEnemies(dt) {
+    const { P } = this;
+    const sh = this.shake;
     enemies.forEach(e => {
       if (e.stunned) { e.stunT -= dt; if (e.stunT <= 0) e.stunned = false; }
       if (e.frozen) { e.frozenT -= dt; if (e.frozenT <= 0) e.frozen = false; }
@@ -162,32 +410,37 @@ export class Game {
       if (d < e.r + P.r && P.invT <= 0) {
         if (Math.random() > P.dodge) {
           P.hp -= e.dmg; P.invT = 0.7; sh.t = 0.2;
+          playPlayerHit();
           if (P.hp <= 0) { P.hp = 0; this.endGame(); }
-        } else this.addDN(P.x, P.y - 20, 'DODGE', '#1DFFD0', 0.55);
+        } else {
+          this.addDN(P.x, P.y - 20, 'DODGE', P.col, 0.55);
+          playDodge();
+        }
       }
     });
+  }
 
-    // enemy bullets
-    for (let i = bullets.length - 1; i >= 0; i--) {
-      const b = bullets[i]; if (!b.enemy) continue;
-      if (dist2(b, P) < (b.r + P.r) ** 2 && P.invT <= 0) {
-        if (Math.random() > P.dodge) { P.hp -= b.dmg; P.invT = 0.7; sh.t = 0.18; if (P.hp <= 0) { P.hp = 0; this.endGame(); } }
-        else this.addDN(P.x, P.y - 20, 'DODGE', '#1DFFD0', 0.55);
-        bullets.splice(i, 1);
-      }
-    }
-
-    // gems
+  _updateGems(dt) {
+    const P = this.P;
+    const now = performance.now();
     this.gems = this.gems.filter(g => {
       const dx = P.x - g.x, dy = P.y - g.y, d = Math.sqrt(dx * dx + dy * dy);
       if (d < P.mag) { g.x += (P.x - g.x) * 5 * dt; g.y += (P.y - g.y) * 5 * dt; }
-      if (d < P.r + g.r) { this.addXp(g.val); return false; }
+      if (d < P.r + g.r) {
+        this.addXp(g.val);
+        if (now - this._lastXpSound > 80) { playXp(); this._lastXpSound = now; }
+        return false;
+      }
       return true;
     });
+  }
 
-    updateParticles(dt);
-    this.dmgNums = this.dmgNums.filter(d => { d.y -= 40 * dt; d.life -= dt; return d.life > 0; });
-    updateHUD(P, this.gt, WDEFS);
+  _doBossHit(dmg, col, isSynergy = false) {
+    const now = performance.now();
+    hitBoss(this.boss, dmg, col, isSynergy);
+    const numCol = isSynergy ? '#FFB627' : col;
+    this.addDN(this.boss.x, this.boss.y - this.boss.r, Math.round(dmg), numCol, 0.7, isSynergy);
+    if (now - this._lastHitSound > 80) { playHit(isSynergy); this._lastHitSound = now; }
   }
 
   hitEnemy(e, dmg, col, isSynergy = false) {
@@ -195,10 +448,13 @@ export class Game {
     const numCol = isSynergy ? '#FFB627' : col === '#00CFFF' ? '#00CFFF' : col === '#BF77FF' ? '#BF77FF' : '#fff';
     this.addDN(e.x, e.y - e.r, Math.round(dmg), numCol, 0.7, isSynergy);
     addBurst(e.x, e.y, col, isSynergy ? 6 : 3, isSynergy ? 90 : 60, 2.5, 0.32);
+    const now = performance.now();
+    if (now - this._lastHitSound > 80) { playHit(isSynergy); this._lastHitSound = now; }
     if (e.hp <= 0) {
       this.killCount++;
       this.gems.push({ x: e.x, y: e.y, r: 5, val: e.xp });
       this.spawnDeath(e.x, e.y, e.col, e.frozen);
+      playEnemyDeath(e.frozen);
     }
   }
 
@@ -210,6 +466,9 @@ export class Game {
 
   spawnRing(x, y, r, col, dmg) {
     addRing(x, y, r, col, 2, 0.35);
+    // hit boss
+    if (this.boss?.alive && dist2({ x, y }, this.boss) < r * r) this._doBossHit(dmg, col);
+    // hit enemies
     enemies.forEach(e => { if (dist2({ x, y }, e) < r * r) this.hitEnemy(e, dmg, col); });
     pruneEnemies();
   }
@@ -235,6 +494,7 @@ export class Game {
 
   levelUp() {
     this.paused = true;
+    playLevelUp();
     const pool = buildPool(this.P, WDEFS);
     const cards = pool.map(u => {
       if (u.type === 'wep') {
@@ -267,6 +527,8 @@ export class Game {
 
   endGame() {
     this.running = false;
+    stopBossMusic();
+    playDeath();
     const m = Math.floor(this.gt / 60), s = Math.floor(this.gt % 60);
     const wList = Object.entries(this.P.w).map(([id, lvl]) => `${WDEFS[id].icon} ${WDEFS[id].name} T${lvl}`).join(' · ');
     showOverlay(`
@@ -300,6 +562,26 @@ export class Game {
     ctx.translate(shake.x, shake.y);
     ctx.fillStyle = '#08080f'; ctx.fillRect(-8, -8, W + 16, H + 16);
 
+    // surge vignette — red pulsing edge glow
+    if (this.surgeActive) {
+      const pulse = 0.13 + 0.07 * Math.sin(this.gt * 9);
+      const vg = ctx.createRadialGradient(W / 2, H / 2, H * 0.28, W / 2, H / 2, H * 0.85);
+      vg.addColorStop(0, 'rgba(0,0,0,0)');
+      vg.addColorStop(1, `rgba(200,20,20,${pulse})`);
+      ctx.fillStyle = vg;
+      ctx.fillRect(-8, -8, W + 16, H + 16);
+    }
+
+    // boss intro vignette — more aggressive, deep red
+    if (this.bossIntro) {
+      const pulse = 0.22 + 0.14 * Math.sin(this.gt * 11);
+      const vg = ctx.createRadialGradient(W / 2, H / 2, H * 0.1, W / 2, H / 2, H * 0.9);
+      vg.addColorStop(0, 'rgba(0,0,0,0)');
+      vg.addColorStop(1, `rgba(220,10,10,${pulse})`);
+      ctx.fillStyle = vg;
+      ctx.fillRect(-8, -8, W + 16, H + 16);
+    }
+
     ctx.strokeStyle = 'rgba(0,207,255,0.035)'; ctx.lineWidth = 1;
     const gs = 52;
     for (let x = 0; x < W + gs; x += gs) { ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x, H); ctx.stroke(); }
@@ -311,6 +593,8 @@ export class Game {
       ctx.fillStyle = '#7F77DD'; ctx.beginPath(); ctx.arc(g.x, g.y, g.r, 0, Math.PI * 2); ctx.fill();
       ctx.fillStyle = 'rgba(191,119,255,0.8)'; ctx.beginPath(); ctx.arc(g.x - 1, g.y - 2, 1.5, 0, Math.PI * 2); ctx.fill();
     });
+
+    drawBoss(ctx, this.boss);
 
     enemies.forEach(e => {
       const col = e.hitFlash > 0 ? '#fff' : e.frozen ? '#00CFFF' : e.stunned ? '#BF77FF' : e.slowT > 0 ? '#7ecfef' : e.col;
@@ -338,8 +622,8 @@ export class Game {
     });
 
     const fl = P.invT > 0 && Math.floor(P.invT * 12) % 2 === 0;
-    ctx.shadowColor = fl ? '#fff' : '#1DFFD0'; ctx.shadowBlur = 14;
-    ctx.fillStyle = fl ? '#fff' : '#1DFFD0';
+    ctx.shadowColor = fl ? '#fff' : P.col; ctx.shadowBlur = 14;
+    ctx.fillStyle = fl ? '#fff' : P.col;
     ctx.beginPath(); ctx.arc(P.x, P.y, P.r, 0, Math.PI * 2); ctx.fill();
     ctx.strokeStyle = 'rgba(0,255,200,0.35)'; ctx.lineWidth = 2; ctx.stroke();
     ctx.shadowBlur = 0;
@@ -354,6 +638,40 @@ export class Game {
       ctx.fillText(d.val, d.x, d.y);
       ctx.shadowBlur = 0;
     });
+    // boss intro flash — "BOSS FIGHT" pulses for 3.5s
+    if (this.bossIntro) {
+      const flash = Math.sin(this.gt * 7) > 0; // fast strobe
+      if (flash) {
+        ctx.globalAlpha = 0.92;
+        ctx.textAlign = 'center';
+        ctx.font = 'bold 52px Courier New';
+        ctx.fillStyle = '#E24B4A';
+        ctx.shadowColor = '#E24B4A';
+        ctx.shadowBlur = 40;
+        ctx.fillText('BOSS FIGHT', W / 2, H / 2 - 10);
+        ctx.font = 'bold 13px Courier New';
+        ctx.fillStyle = '#ff6666';
+        ctx.shadowBlur = 12;
+        ctx.fillText('// SIGNAL DETECTED //', W / 2, H / 2 + 28);
+        ctx.shadowBlur = 0;
+      }
+    }
+
+    // big surge flash — fades out over 1.8s
+    if (this.surgeFlashT > 0) {
+      const t = this.surgeFlashT / 1.8;
+      // fast in, slow fade
+      const alpha = t > 0.7 ? 1 : t / 0.7;
+      ctx.globalAlpha = alpha;
+      ctx.textAlign = 'center';
+      ctx.font = 'bold 42px Courier New';
+      ctx.fillStyle = '#E24B4A';
+      ctx.shadowColor = '#E24B4A';
+      ctx.shadowBlur = 28;
+      ctx.fillText('!! SURGE !!', W / 2, H / 2);
+      ctx.shadowBlur = 0;
+    }
+
     ctx.globalAlpha = 1;
     ctx.restore();
   }

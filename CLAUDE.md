@@ -61,7 +61,7 @@ All weapons have 3 tiers. Tiers are unlocked via the upgrade screen during a run
 | Cryo Lance | ❄ | #00CFFF | Setup — slows (T1), freezes (T2), 3-shot spread (T3) |
 | Pulse Cannon | ◈ | #FFB627 | Burst damage — heavy shot (T1), AoE (T2), pierce (T3) |
 | EMP Burst | ⚡ | #BF77FF | Crowd control — stuns (T1), wider radius (T2), overload explosion (T3) |
-| Nano Swarm | ◉ | #1DFFD0 | Sustained DPS — 2 drones (T1), 3 drones (T2), 4 drones (T3) |
+| Nano Swarm | ◉ | #1DFFD0 | Seeking drones — orbit then launch at targets, return after hit. 2 drones (T1), 3 drones (T2), 4 drones + chain on hit (T3) |
 
 More weapons planned as content expands.
 
@@ -184,3 +184,5 @@ The name should convey:
 - Cyberpunk/sci-fi tone
 - Mobile-friendly (short, punchy)
 Alternatives worth considering: SYNAPSE, GHOST.EXE, NULL RUN, OVERCLOCK, CIPHER, JACK IN
+
+## CHANGELOG

@@ -9,6 +9,10 @@ export function initHUD() {
     <div id="hpbar-wrap"><div id="hpbar" style="width:100%"></div></div>
     <div id="xpbar-wrap"><div id="xpbar"></div></div>
     <div id="surge">!! SURGE !!</div>
+    <div id="bossbar-wrap">
+      <div id="bossbar-label">◈ SIGNAL</div>
+      <div id="bossbar-track"><div id="bossbar"></div></div>
+    </div>
     <canvas id="c"></canvas>
     <div id="wbar">
       <div class="ws" id="ws0"></div>
@@ -58,4 +62,15 @@ export function hideOverlay() {
 
 export function setSurge(visible) {
   document.getElementById('surge').style.opacity = visible ? '1' : '0';
+}
+
+export function setBossBar(boss) {
+  const wrap = document.getElementById('bossbar-wrap');
+  if (!boss || !boss.alive) { wrap.style.display = 'none'; return; }
+  wrap.style.display = 'flex';
+  const bar = document.getElementById('bossbar');
+  const pct = Math.max(0, boss.hp / boss.maxHp * 100);
+  bar.style.width = pct + '%';
+  bar.style.background = boss.phase === 2 ? '#D4537E' : '#E24B4A';
+  document.getElementById('bossbar-label').style.color = boss.phase === 2 ? '#D4537E' : '#E24B4A';
 }

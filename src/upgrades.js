@@ -17,7 +17,10 @@ export function buildPool(p, WDEFS) {
   const pas = [...PASSIVES].sort(() => Math.random() - 0.5);
   const pool = [];
   if (weps.length) pool.push(weps[Math.floor(Math.random() * weps.length)]);
-  while (pool.length < 3 && pas.length) pool.push({ ...pas.shift(), id: 'p_' + pas[0]?.id, type: 'pas' });
+  while (pool.length < 3 && pas.length) {
+    const item = pas.shift();
+    pool.push({ ...item, id: 'p_' + item.id, type: 'pas' });
+  }
   while (pool.length < 3 && weps.length) {
     const w = weps.splice(Math.floor(Math.random() * weps.length), 1)[0];
     if (!pool.find(x => x.id === w.id)) pool.push(w);

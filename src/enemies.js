@@ -1,6 +1,6 @@
-export let enemies = [];
+export const enemies = [];
 
-export function resetEnemies() { enemies = []; }
+export function resetEnemies() { enemies.length = 0; }
 
 export function spawnEnemy(gt, W, H) {
   const side = Math.floor(Math.random() * 4);
@@ -31,14 +31,24 @@ export function spawnEnemy(gt, W, H) {
 }
 
 export function pruneEnemies() {
-  enemies = enemies.filter(e => e.hp > 0);
+  for (let i = enemies.length - 1; i >= 0; i--) {
+    if (enemies[i].hp <= 0) enemies.splice(i, 1);
+  }
 }
+
+let _extraTarget = null;
+export function setExtraTarget(t) { _extraTarget = t; }
+export function clearExtraTarget() { _extraTarget = null; }
 
 export function nearest(P) {
   let best = null, bd = Infinity;
   enemies.forEach(e => { const d = dist2(P, e); if (d < bd) { bd = d; best = e; } });
+  // also consider boss (or any extra target) so weapons lock on during boss fights
+  if (_extraTarget) { const d = dist2(P, _extraTarget); if (d < bd) best = _extraTarget; }
   return best;
 }
+
+export function getExtraTarget() { return _extraTarget; }
 
 export function dist2(a, b) {
   const dx = a.x - b.x, dy = a.y - b.y;
