@@ -1,6 +1,11 @@
 let ctx = null;
 let master = null;
 let _noiseBuf = null;
+let _enemyAudioWindowStart = 0;
+let _enemyAudioCount = 0;
+
+const ENEMY_AUDIO_WINDOW = 0.08;
+const ENEMY_AUDIO_MAX = 6;
 
 export function initAudio() {
   if (ctx) return;
@@ -19,6 +24,18 @@ export function resumeAudio() {
 // --- internal helpers ---
 
 function n() { return ctx.currentTime; }
+
+function allowEnemyAudio() {
+  if (!ctx) return false;
+  const t = n();
+  if (t - _enemyAudioWindowStart > ENEMY_AUDIO_WINDOW) {
+    _enemyAudioWindowStart = t;
+    _enemyAudioCount = 0;
+  }
+  if (_enemyAudioCount >= ENEMY_AUDIO_MAX) return false;
+  _enemyAudioCount++;
+  return true;
+}
 
 function getNoiseBuf() {
   if (_noiseBuf) return _noiseBuf;
@@ -118,6 +135,7 @@ export function playEmpFire() {
 
 export function playHit(isSynergy = false) {
   if (!ctx) return;
+  if (!allowEnemyAudio()) return;
   if (isSynergy) {
     // impactful synergy strike — gold / crunchy
     noiseShot(0.32, 0.003, 0.1, 'bandpass', 1100, 3);
@@ -129,6 +147,7 @@ export function playHit(isSynergy = false) {
 
 export function playEnemyDeath(frozen = false) {
   if (!ctx) return;
+  if (!allowEnemyAudio()) return;
   if (frozen) {
     // glass shatter — sharp high noise + tinkle tones
     noiseShot(0.4, 0.003, 0.14, 'highpass', 3800);

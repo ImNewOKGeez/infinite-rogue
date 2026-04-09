@@ -1,4 +1,5 @@
 export let particles = [];
+const MAX_PARTICLES = 900;
 
 export function updateParticles(dt) {
   particles = particles.filter(p => {
@@ -10,17 +11,22 @@ export function updateParticles(dt) {
 }
 
 export function addRing(x, y, mr, col, lw = 2, life = 0.4) {
+  if (particles.length >= MAX_PARTICLES) return;
   particles.push({ tp: 'ring', x, y, r: 0, mr, life, lt: life, col, lw });
 }
 
 export function addBurst(x, y, col, n = 6, speed = 80, size = 2.5, life = 0.35) {
-  for (let i = 0; i < n; i++) {
+  const room = MAX_PARTICLES - particles.length;
+  if (room <= 0) return;
+  const count = Math.max(1, Math.min(n, room, room < 120 ? Math.ceil(n * 0.4) : n));
+  for (let i = 0; i < count; i++) {
     const a = Math.random() * Math.PI * 2, s = speed * (0.5 + Math.random());
     particles.push({ tp: 'dot', x, y, vx: Math.cos(a) * s, vy: Math.sin(a) * s, r: size, life, lt: life, col });
   }
 }
 
 export function addDot(x, y, col, r = 5, life = 0.1) {
+  if (particles.length >= MAX_PARTICLES) return;
   particles.push({ tp: 'dot', x, y, r, life, lt: life, col });
 }
 

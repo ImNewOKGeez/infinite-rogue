@@ -1,6 +1,28 @@
 export const enemies = [];
+let enemyIdCounter = 1;
 
-export function resetEnemies() { enemies.length = 0; }
+export function resetEnemies() {
+  enemies.length = 0;
+  enemyIdCounter = 1;
+}
+
+function mkStatusState() {
+  return {
+    slowT: 0,
+    spdMult: 1,
+    frozenT: 0,
+    stunT: 0,
+    stunned: false,
+    frozen: false,
+    freezeMeter: 0,
+    freezeMeterMax: 100,
+    freezeDecayRate: 12,
+    cryoPulseCd: 0,
+    overloadMarkT: 0,
+    empMarkT: 0,
+    hitFlash: 0,
+  };
+}
 
 export function spawnEnemy(gt, W, H) {
   const side = Math.floor(Math.random() * 4);
@@ -26,7 +48,7 @@ export function spawnEnemy(gt, W, H) {
       shooter: { r: 12, hp: 28 + wave * 13, spd: 58 + wave * 4, dmg: 0, xp: 5, col: '#FFB627', shape: 'circ', shootT: 1 },
       brute: { r: 21, hp: 120 + wave * 40, spd: 40 + wave * 3, dmg: 24, xp: 12, col: '#D4537E', shape: 'sq' },
     }[type];
-    enemies.push({ ...base, type, x: x + ox, y, maxHp: base.hp, slowT: 0, frozenT: 0, stunT: 0, stunned: false, frozen: false, hitFlash: 0 });
+    enemies.push({ id: enemyIdCounter++, ...base, type, x: x + ox, y, maxHp: base.hp, ...mkStatusState() });
   }
 }
 
@@ -34,6 +56,55 @@ export function pruneEnemies() {
   for (let i = enemies.length - 1; i >= 0; i--) {
     if (enemies[i].hp <= 0) enemies.splice(i, 1);
   }
+}
+
+export function ensureFreezeState(target, max = 100) {
+  if (target.freezeMeter == null) target.freezeMeter = 0;
+  if (target.freezeMeterMax == null) target.freezeMeterMax = max;
+  if (target.freezeDecayRate == null) target.freezeDecayRate = 12;
+  return target;
+}
+
+export function applySlow(target, duration, spdMult = 0.45) {
+  target.slowT = Math.max(target.slowT || 0, duration);
+  target.spdMult = Math.min(target.spdMult || 1, spdMult);
+}
+
+export function applyFreezeBuildup(target, buildup, freezeDuration, freezeMeterMax = 100) {
+  ensureFreezeState(target, freezeMeterMax);
+  if (target.frozen) {
+    target.frozenT = Math.max(target.frozenT || 0, freezeDuration * 0.25);
+    return { froze: false, meter: target.freezeMeter };
+  }
+  target.freezeMeter = Math.min(target.freezeMeterMax, target.freezeMeter + buildup);
+  if (target.freezeMeter >= target.freezeMeterMax) {
+    target.frozen = true;
+    target.frozenT = Math.max(target.frozenT || 0, freezeDuration);
+    target.slowT = 0;
+    target.freezeMeter = 0;
+    return { froze: true, meter: 0 };
+  }
+  return { froze: false, meter: target.freezeMeter };
+}
+
+export function tickEnemyStatus(e, dt) {
+  if (e.stunned) {
+    e.stunT -= dt;
+    if (e.stunT <= 0) e.stunned = false;
+  }
+  if (e.frozen) {
+    e.frozenT -= dt;
+    if (e.frozenT <= 0) e.frozen = false;
+  } else if (e.freezeMeter > 0) {
+    e.freezeMeter = Math.max(0, e.freezeMeter - (e.freezeDecayRate || 12) * dt);
+  }
+  if (e.slowT > 0) {
+    e.slowT -= dt;
+    if (e.slowT <= 0) e.spdMult = 1;
+  }
+  if (e.cryoPulseCd > 0) e.cryoPulseCd -= dt;
+  if (e.empMarkT > 0) e.empMarkT -= dt;
+  if (e.hitFlash > 0) e.hitFlash -= dt;
 }
 
 let _extraTarget = null;
