@@ -145,7 +145,7 @@ Broad by intent. The game should be readable for casual players and strategicall
 - Heal orbs that restore 5% max HP and are globally throttled.
 - Surge events every 40 seconds outside boss flow.
 - Recurring three-phase boss with warning, intro, boss bar, phase announcements, and post-kill reward draft.
-- Boss-gated weapon Ascension draft for level-5 weapons, with Cryo transformations currently live.
+- Boss-gated weapon Ascension draft for level-5 weapons, with Cryo and Pulse transformation pools currently live.
 - Death screen with run stats, equipped weapons, and run synergies.
 - Save-backed records screen with global and per-character bests.
 - Persistent synergy discovery tracking with first-discovery pause overlay.
@@ -237,6 +237,9 @@ The live weapon system is simple and numeric right now:
 - Level 4: cluster chain extends another generation.
 - Level 5: cluster chain extends to four total generations.
 - Frozen-target bonus damage logic is wired, but depends on freeze being active.
+- `ASCENSIONS.pulse` currently defines `chain_reaction`, `collapsed_round`, `overload_round`, `proximity_mine`, and `fragmentation`.
+- Current implementation note: Pulse Ascension runtime state uses `player._pulseMines`, `player._pulseOverloadCounter`, `game.pendingExplosions`, and `game.slowFields`.
+- Proximity Mine tuning note: mines currently deal 3x base Pulse damage in a 120px blast and leave behind a 2-second amber slow field.
 
 #### EMP
 - Level 1: 160px burst, 18 damage scaling base, 2.5s stun.
@@ -403,8 +406,8 @@ ios/           - generated Capacitor iOS project when created on a Mac; absent o
 src/
   main.js        - app entry, loads save and starts Game
   progression.js - save schema, records, synergy persistence
-  game.js        - core loop, menus, overlays, run flow, combat orchestration, world camera state, and background/boundary rendering via `initBackground`, `updateBackground`, `drawBackground`, and `drawBoundaryWarning`
-  player.js      - character roster, player factory, weapon-state helpers
+  game.js        - core loop, menus, overlays, run flow, combat orchestration, world camera state, background/boundary rendering via `initBackground`, `updateBackground`, `drawBackground`, and `drawBoundaryWarning`, plus Pulse runtime helpers like `updateMines`, `drawMines`, `triggerMineExplosion`, `updateSlowFields`, `drawSlowFields`, and delayed Pulse explosions
+  player.js      - character roster, player factory, weapon-state helpers, and per-run Pulse Ascension tracking fields
   weapons.js     - weapon defs, bullets, ascension defs, cryo ascension hooks, pulse clusters, shield logic hooks
   enemies.js     - enemy roster, spawn logic, targeting and status helpers, freeze-state updates, and freeze spread
   upgrades.js    - passive defs, upgrade pool generation, `buildAscensionPool`, `applyUpgrade`, and `applyAscension`
@@ -478,12 +481,15 @@ src/
 6. Refactor character passives from hardcoded `game.js` checks into a hook surface on the character definition object in `player.js`. This is required before the roster expands beyond three characters.
 
 ## Changelog
+- 2026-04-10: Tuned Pulse Ascensions again by moving Overload Round to a 3-shot cadence with stronger screen-space feedback, making Chain Reaction cluster detonations and proc impacts visibly bigger, and upgrading Proximity Mine to a 120px 3x-damage blast that leaves a fading amber slow field.
+- 2026-04-10: Added the full Pulse Ascension pool with Chain Reaction, Collapsed Round, Overload Round, Proximity Mine, and Fragmentation, including mine runtime state, overload HUD tracking, delayed collapsed explosions, and chain-proc cluster handling.
+- 2026-04-10: Re-reviewed this brief against the live repo after the world-space/mobile pass, confirmed the current body still matches the implemented arena/camera/playtest/mobile state, and clarified the older 2026-04-09 weapon-state history so the changelog reads as an ordered progression instead of a contradiction.
 - 2026-04-10: Fixed the first world-space regression by changing bullet pruning to use arena coordinates instead of screen bounds, clamped the camera to the arena edges, strengthened the world-boundary warning with deeper reach plus pulse/edge-line cues, and exposed world/camera debug values in the playtest lab.
 - 2026-04-10: Added a camera-centred world-space arena (`WORLD_W`/`WORLD_H` = `3000`), moved enemies and boss spawning into world coordinates, added the data-network background pass with packet animation and culling, and added boundary warning overlays.
 - 2026-04-10: Clarified in this brief that new gameplay-affecting features should be surfaced through the playtest lab, and updated the playtest lab overlay styling so it supports visible touch scrolling on mobile devices.
 - 2026-04-10: Reworked the main menu for small mobile screens by collapsing the separate loadout panel into the selected character card, tightening card spacing, shrinking the records control into a compact text button, and reserving a persistent bottom action area so `JACK IN` stays visible on short Android displays without scrolling.
 - 2026-04-09: Documented the live playtest lab and passive-hook debt, removed legacy weapon `stats`/`paths` state from `player.js`, added the Claude Code architecture-flagging instruction, set up Capacitor with Android scaffolding plus mobile viewport/audio/touch hardening, generated placeholder native assets, and updated `.gitignore` plus this brief to match the current repo state.
-- 2026-04-09: Updated this brief to match the live code more closely by documenting the playtest lab, recording that Bruiser/Hacker passive hooks still live in `game.js`, and preserving the remaining legacy weapon-state fields from the older path-tree experiment as an active architecture concern.
+- 2026-04-09: Updated this brief to match the then-live code more closely by documenting the playtest lab, recording that Bruiser/Hacker passive hooks still lived in `game.js`, and flagging the still-present legacy weapon-state fields from the older path-tree experiment as an architecture concern before they were later removed.
 - 2026-04-09: Added the Ascension system, including boss-gated level-5 weapon transformations, a dedicated Ascension draft overlay, HUD `ASC` indicators, and the first full Cryo Ascension pool with Storm, Permafrost, Nova, Glacial Lance, Frost Field, and Shatter behaviors.
 - 2026-04-09: Tightened the boss again by reducing downtime, increasing bullet density, improving intercept/lane-cut pressure, adding marked charge impact bursts, and making phase escalations more demanding while keeping damage tied to visible telegraphs and avoidable positioning mistakes.
 - 2026-04-09: Reactivated Cryo as a live freeze-meter system with thaw cooldowns, staged frost visuals, proportional freeze spread, and boss-specific anti-freeze handling, then removed live gameplay synergies again while keeping the progression/discovery scaffolding.

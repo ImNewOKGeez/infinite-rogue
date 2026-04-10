@@ -37,6 +37,33 @@ export const ASCENSIONS = {
       name: 'SHATTER',
       description: 'Frozen enemies have a chance to instantly die on any hit. Chance scales with freeze time remaining - max 25% at moment of freeze, drops to zero as timer expires.',
     },
+  ],
+  pulse: [
+    {
+      id: 'chain_reaction',
+      name: 'CHAIN REACTION',
+      description: 'Cluster bomb explosions have a 35% chance to trigger a full new Pulse shell impact at that location, complete with its own cluster generation.',
+    },
+    {
+      id: 'collapsed_round',
+      name: 'COLLAPSED ROUND',
+      description: 'Pulse shells pull all enemies within 180px sharply toward the impact point for 0.3 seconds before the explosion fires. Cluster chain follows as normal.',
+    },
+    {
+      id: 'overload_round',
+      name: 'OVERLOAD ROUND',
+      description: 'Every 5th Pulse shot is an Overload Round - 5x damage, pierces all enemies, explosion radius doubled. Counter resets on death.',
+    },
+    {
+      id: 'proximity_mine',
+      name: 'PROXIMITY MINE',
+      description: 'Pulse shells drop at the player\'s feet as proximity mines. Enemies walking over a mine trigger it. Up to 6 mines active at once.',
+    },
+    {
+      id: 'fragmentation',
+      name: 'FRAGMENTATION',
+      description: 'Pulse shells split into 8 fragments before impact. Each deals 40% damage and triggers a smaller explosion with one fewer cluster generation.',
+    },
   ]
 };
 
@@ -85,6 +112,42 @@ function getCryoFreezeAmount(lvl) {
 
 function getCryoDamage(lvl, dmgMult) {
   return dmgMult * (4 + lvl * 1.5);
+}
+
+function getPulseClusterGeneration(lvl) {
+  return Math.max(0, lvl - 1);
+}
+
+function getPulseBaseDamage(p, lvl) {
+  return p.dmg * (28 + lvl * 10);
+}
+
+function firePulseShell(p, angle, dmg, lvl, overrides = {}) {
+  const radius = overrides.radius ?? 9;
+  const speed = overrides.speed ?? 300;
+  const color = overrides.col ?? '#FFB627';
+  const life = overrides.life ?? 2.8;
+  mkBullet(
+    p.x,
+    p.y,
+    Math.cos(angle) * speed,
+    Math.sin(angle) * speed,
+    radius,
+    dmg,
+    color,
+    life,
+    {
+      type: 'pulse',
+      tier: lvl,
+      pulseLvl: lvl,
+      pierce: overrides.pierce ?? 0,
+      explosive: true,
+      clusterGen: overrides.clusterGen ?? getPulseClusterGeneration(lvl),
+      isOverload: !!overrides.isOverload,
+      isFragment: !!overrides.isFragment,
+      ...overrides.meta,
+    }
+  );
 }
 
 export const WDEFS = {
@@ -169,18 +232,64 @@ export const WDEFS = {
       const t = nearest(p); if (!t) return;
       const a = Math.atan2(t.y - p.y, t.x - p.x);
       const lvl = getWeaponLevel(p, 'pulse');
-      const dmg = p.dmg * (28 + lvl * 10);
-      mkBullet(
-        p.x,
-        p.y,
-        Math.cos(a) * 300,
-        Math.sin(a) * 300,
-        9,
-        dmg,
-        '#FFB627',
-        2.8,
-        { type: 'pulse', tier: lvl, pulseLvl: lvl, pierce: 0, explosive: true }
-      );
+      const dmg = getPulseBaseDamage(p, lvl);
+      const ascension = getAscension(p, 'pulse');
+
+      if (ascension === 'proximity_mine') {
+        p._pulseMines ||= [];
+        if (p._pulseMines.length >= 6) p._pulseMines.shift();
+        p._pulseMines.push({
+          x: p.x,
+          y: p.y,
+          r: 18,
+          armed: false,
+          armTimer: 0.5,
+          triggered: false,
+          dmg: dmg * 3,
+          col: '#FFB627',
+          life: 30,
+        });
+        return;
+      }
+
+      if (ascension === 'fragmentation') {
+        const fragmentCount = 8;
+        const spread = (50 * Math.PI) / 180;
+        const startOffset = -spread * 0.5;
+        const step = fragmentCount > 1 ? spread / (fragmentCount - 1) : 0;
+        const fragmentClusterGen = Math.max(0, getPulseClusterGeneration(lvl) - 1);
+        for (let i = 0; i < fragmentCount; i++) {
+          const angle = a + startOffset + i * step;
+          firePulseShell(p, angle, dmg * 0.4, lvl, {
+            radius: 5,
+            speed: 340,
+            clusterGen: fragmentClusterGen,
+            isFragment: true,
+          });
+        }
+        return;
+      }
+
+      if (ascension === 'overload_round') {
+        p._pulseOverloadCounter = (p._pulseOverloadCounter || 0) + 1;
+        if (p._pulseOverloadCounter >= 3) {
+          p._pulseOverloadCounter = 0;
+          firePulseShell(p, a, dmg * 5, lvl, {
+            radius: 14,
+            pierce: 999,
+            col: '#FFD56A',
+            isOverload: true,
+            meta: {
+              glowCol: '#FFE6A6',
+            },
+          });
+          return;
+        }
+      }
+
+      firePulseShell(p, a, dmg, lvl, {
+        meta: ascension === 'chain_reaction' ? { chainState: { procs: 0 } } : undefined,
+      });
     }
   },
   emp: {
@@ -460,16 +569,24 @@ export function triggerPulseShockwave(e, dmg, onHitEnemy) {
 }
 
 export function triggerPulseExplosion(game, bullet, x, y, onHitEnemy, onHitBoss) {
-  const lvl = bullet.meta?.pulseLvl || 1;
-  const radius = 78;
+  const radius = bullet.meta?.isOverload ? 156 : bullet.meta?.chainProc ? 117 : bullet.meta?.isFragment ? 48 : 78;
   const splash = bullet.dmg * 0.65;
-  addRing(x, y, radius, '#FFB627', 2.8, 0.5);
+  const ringMr = bullet.meta?.isOverload ? radius * 2.5 : bullet.meta?.chainProc ? radius * 1.5 : radius;
+  addRing(x, y, ringMr, '#FFB627', 2.8, 0.5);
   addBurst(x, y, '#FFB627', 10, 95, 4, 0.45);
+  if (bullet.meta?.isOverload && game) game.overloadFlash = Math.max(game.overloadFlash || 0, 0.15);
+  if (bullet.meta?.chainProc && game) game.chainFlash = Math.max(game.chainFlash || 0, 0.1);
   applyPulseExplosionDamage(x, y, radius, splash, onHitEnemy, onHitBoss);
-  if (lvl >= 2) spawnPulseClusterBombs(x, y, bullet.dmg * 0.45, 1, lvl);
+  const clusterGen = Math.max(0, bullet.meta?.clusterGen ?? getPulseClusterGeneration(bullet.meta?.pulseLvl || 1));
+  if (clusterGen > 0) {
+    spawnPulseClusterBombs(x, y, bullet.dmg * 0.45, 1, clusterGen, {
+      chainState: bullet.meta?.chainState || null,
+      isChainProc: !!bullet.meta?.isChainProc,
+    });
+  }
 }
 
-function spawnPulseClusterBombs(x, y, dmg, generation, lvl) {
+function spawnPulseClusterBombs(x, y, dmg, generation, maxGeneration, options = {}) {
   const count = generation === 1 ? 4 : 3;
   const speed = generation === 1 ? 180 : 140;
   const life = generation === 1 ? 0.32 : 0.24;
@@ -484,11 +601,18 @@ function spawnPulseClusterBombs(x, y, dmg, generation, lvl) {
       dmg,
       life,
       maxLife: life,
-      lvl,
       generation,
-      canRecluster: generation < getPulseMaxClusterGeneration(lvl),
+      maxGeneration,
+      canRecluster: generation < maxGeneration,
+      chainState: options.chainState || null,
+      isChainProc: !!options.isChainProc,
     });
   }
+}
+
+export function spawnPulseClusters(x, y, dmg, maxGeneration, options = {}) {
+  if (maxGeneration <= 0) return;
+  spawnPulseClusterBombs(x, y, dmg, 1, maxGeneration, options);
 }
 
 function getPulseMaxClusterGeneration(lvl) {
@@ -519,10 +643,14 @@ function updatePulseClusters(game, dt) {
 }
 
 function detonatePulseCluster(cluster, game) {
-  const radius = cluster.generation === 1 ? 56 : 42;
+  const chainReactionActive = game && getAscension(game.P, 'pulse') === 'chain_reaction';
+  const radiusBase = cluster.generation === 1 ? 56 : 42;
+  const radius = chainReactionActive ? radiusBase * 1.3 : radiusBase;
   const color = cluster.generation === 1 ? '#FFB627' : '#FFE4A3';
   addRing(cluster.x, cluster.y, radius, color, 1.8, 0.35);
-  addBurst(cluster.x, cluster.y, color, cluster.generation === 1 ? 6 : 4, 70, 2.8, 0.35);
+  const burstCount = (cluster.generation === 1 ? 6 : 4) + (chainReactionActive ? 4 : 0);
+  const burstSpeed = (chainReactionActive ? 1.3 : 1) * 70;
+  addBurst(cluster.x, cluster.y, color, burstCount, burstSpeed, 2.8, 0.35);
   applyPulseExplosionDamage(
     cluster.x,
     cluster.y,
@@ -537,9 +665,14 @@ function detonatePulseCluster(cluster, game) {
       cluster.y,
       cluster.dmg * 0.55,
       cluster.generation + 1,
-      cluster.lvl
+      cluster.maxGeneration,
+      {
+        chainState: cluster.chainState,
+        isChainProc: cluster.isChainProc,
+      }
     );
   }
+  if (game?.handlePulseClusterExplosion) game.handlePulseClusterExplosion(cluster, radius, color);
 }
 
 function applyPulseExplosionDamage(x, y, radius, dmg, onHitEnemy, onHitBoss) {

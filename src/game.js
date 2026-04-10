@@ -2,7 +2,7 @@ import { initHUD, updateHUD, showOverlay, hideOverlay, setSurge, setBossBar, sho
 import { initInput, initJoystick, jDir } from './input.js';
 import { CHARACTERS, addWeapon, getAscension, getOwnedWeaponIds, getWeaponLevel, hasAscension, mkPlayer } from './player.js';
 import { enemies, resetEnemies, spawnEnemy, pruneEnemies, dist2, setExtraTarget, clearExtraTarget, tickEnemyStatus, updateEnemyFreezeState } from './enemies.js';
-import { ASCENSIONS, WDEFS, bullets, resetBullets, resetPulseClusters, handleCryoImpact, updateCryoFields, getPulseHitDamage, triggerPulseExplosion, triggerOverload, spawnBullet, applyFreezeMeter } from './weapons.js';
+import { ASCENSIONS, WDEFS, bullets, resetBullets, resetPulseClusters, handleCryoImpact, updateCryoFields, getPulseHitDamage, triggerPulseExplosion, triggerOverload, spawnBullet, applyFreezeMeter, spawnPulseClusters } from './weapons.js';
 import { PASSIVES, buildPool, applyUpgrade, buildAscensionPool, applyAscension } from './upgrades.js';
 import { updateParticles, addRing, addBurst, addDot, drawParticles } from './particles.js';
 import { mkBoss, updateBoss, drawBoss, hitBoss, BOSS_SPAWN_TIME, BOSS_RESPAWN_DELAY } from './boss.js';
@@ -74,6 +74,10 @@ export class Game {
     this.bgNodes = [];
     this.bgConnections = [];
     this.bgPackets = [];
+    this.pendingExplosions = [];
+    this.slowFields = [];
+    this.overloadFlash = 0;
+    this.chainFlash = 0;
   }
 
   start() {
@@ -153,7 +157,13 @@ export class Game {
     this.discoveryPauseActive = false;
     this.shatterFlashT = 0;
     this.shatterBursts = [];
+    this.pendingExplosions = [];
+    this.slowFields = [];
+    this.overloadFlash = 0;
+    this.chainFlash = 0;
     this.P = mkPlayer(this.W, this.H, char);
+    this.P._pulseMines = [];
+    this.P._pulseOverloadCounter = 0;
     this.camX = 0;
     this.camY = 0;
     this.initBackground();
@@ -302,6 +312,8 @@ export class Game {
       return fx.life > 0;
     });
     if (this.shatterFlashT > 0) this.shatterFlashT = Math.max(0, this.shatterFlashT - dt);
+    if (this.overloadFlash > 0) this.overloadFlash = Math.max(0, this.overloadFlash - dt);
+    if (this.chainFlash > 0) this.chainFlash = Math.max(0, this.chainFlash - dt);
     this.shatterBursts = this.shatterBursts.filter(p => {
       p.life -= dt;
       p.x += Math.cos(p.a) * p.spd * dt;
@@ -316,7 +328,10 @@ export class Game {
     this._fireWeapons(dt);
     this._updateBullets(dt);
     updateCryoFields(this, dt);
+    this.updateSlowFields(dt);
     this._updateEnemies(dt);
+    this.updatePendingExplosions(dt);
+    this.updateMines(dt);
     this._updateGems(dt);
     this._updateHealOrbs(dt);
 
@@ -440,6 +455,171 @@ export class Game {
     for (let i = bullets.length - 1; i >= 0; i--) {
       if (bullets[i].enemy) bullets.splice(i, 1);
     }
+  }
+
+  queuePulseExplosion({ x, y, dmg, clusterGen = 0, delay = 0.3, sourceMeta = null }) {
+    this.pendingExplosions.push({ x, y, dmg, clusterGen, delay, sourceMeta });
+  }
+
+  updatePendingExplosions(dt) {
+    if (!this.pendingExplosions.length) return;
+    for (let i = this.pendingExplosions.length - 1; i >= 0; i--) {
+      const explosion = this.pendingExplosions[i];
+      explosion.delay -= dt;
+      if (explosion.delay > 0) continue;
+      const bullet = {
+        x: explosion.x,
+        y: explosion.y,
+        dmg: explosion.dmg,
+        col: '#FFB627',
+        meta: {
+          type: 'pulse',
+          pulseLvl: explosion.sourceMeta?.pulseLvl || getWeaponLevel(this.P, 'pulse'),
+          clusterGen: explosion.clusterGen,
+          isOverload: !!explosion.sourceMeta?.isOverload,
+          isFragment: !!explosion.sourceMeta?.isFragment,
+          chainProc: !!explosion.sourceMeta?.chainProc,
+          chainState: explosion.sourceMeta?.chainState || null,
+          isChainProc: !!explosion.sourceMeta?.isChainProc,
+        },
+      };
+      triggerPulseExplosion(
+        this,
+        bullet,
+        explosion.x,
+        explosion.y,
+        (target, splash, col) => this.hitEnemy(target, splash, col),
+        (splash, col) => this._doBossHit(splash, col)
+      );
+      this.pendingExplosions.splice(i, 1);
+    }
+  }
+
+  _applyCollapsedRoundPull(x, y) {
+    const pullRadius = 180;
+    enemies.forEach(e => {
+      const dx = x - e.x;
+      const dy = y - e.y;
+      if (dx * dx + dy * dy > pullRadius * pullRadius) return;
+      e._pullTarget = { x, y };
+      e._pullTimer = 0.3;
+      e._pullSpeed = 400;
+    });
+    addBurst(x, y, '#FFB627', 12, 110, -2.4, 0.28);
+    addRing(x, y, pullRadius, 'rgba(255,182,39,0.4)', 1.8, 0.18);
+  }
+
+  handlePulseImpact(bullet, x, y) {
+    const ascension = getAscension(this.P, 'pulse');
+    if (ascension === 'collapsed_round' && !bullet.meta?.isFragment) {
+      this._applyCollapsedRoundPull(x, y);
+      this.queuePulseExplosion({
+        x,
+        y,
+        dmg: bullet.dmg,
+        clusterGen: Math.max(0, bullet.meta?.clusterGen ?? 0),
+        delay: 0.3,
+        sourceMeta: {
+          pulseLvl: bullet.meta?.pulseLvl,
+          isOverload: !!bullet.meta?.isOverload,
+          isFragment: !!bullet.meta?.isFragment,
+          chainProc: !!bullet.meta?.chainProc,
+          chainState: bullet.meta?.chainState || null,
+          isChainProc: !!bullet.meta?.isChainProc,
+        },
+      });
+      return;
+    }
+    triggerPulseExplosion(
+      this,
+      bullet,
+      x,
+      y,
+      (target, splash, col) => this.hitEnemy(target, splash, col),
+      (splash, col) => this._doBossHit(splash, col)
+    );
+  }
+
+  handlePulseClusterExplosion(cluster) {
+    if (getAscension(this.P, 'pulse') !== 'chain_reaction') return;
+    if (cluster.isChainProc) return;
+    const chainState = cluster.chainState;
+    if (!chainState || chainState.procs >= 3) return;
+    if (Math.random() >= 0.35) return;
+    chainState.procs += 1;
+    addRing(cluster.x, cluster.y, 80, '#FFB627', 2.8, 0.3);
+    addBurst(cluster.x, cluster.y, '#FFD56A', 10, 200, 2.8, 0.22);
+    this.chainFlash = Math.max(this.chainFlash, 0.1);
+    const lvl = getWeaponLevel(this.P, 'pulse');
+    const procBullet = {
+      x: cluster.x,
+      y: cluster.y,
+      dmg: this.P.dmg * (28 + lvl * 10),
+      col: '#FFB627',
+      meta: {
+        type: 'pulse',
+        tier: lvl,
+        pulseLvl: lvl,
+        explosive: true,
+        clusterGen: Math.max(0, lvl - 1),
+        chainProc: true,
+        isChainProc: true,
+      },
+    };
+    this.handlePulseImpact(procBullet, cluster.x, cluster.y);
+  }
+
+  updateMines(dt) {
+    if (!this.P?._pulseMines) return;
+    this.P._pulseMines = this.P._pulseMines.filter(mine => {
+      mine.life -= dt;
+      if (mine.armTimer > 0) {
+        mine.armTimer -= dt;
+        return mine.life > 0;
+      }
+      mine.armed = true;
+      if (mine.triggered || mine.life <= 0) return false;
+      for (const e of enemies) {
+        if (Math.hypot(e.x - mine.x, e.y - mine.y) < mine.r + e.r) {
+          mine.triggered = true;
+          this.triggerMineExplosion(mine);
+          return false;
+        }
+      }
+      return true;
+    });
+  }
+
+  updateSlowFields(dt) {
+    this.slowFields = this.slowFields.filter(f => {
+      f.life -= dt;
+      return f.life > 0;
+    });
+  }
+
+  triggerMineExplosion(mine) {
+    const blastR = 120;
+    enemies.forEach(e => {
+      if (Math.hypot(e.x - mine.x, e.y - mine.y) < blastR) {
+        this.hitEnemy(e, mine.dmg, mine.col);
+      }
+    });
+    pruneEnemies();
+    const clusterGen = Math.max(0, getWeaponLevel(this.P, 'pulse') - 1);
+    if (clusterGen > 0) {
+      spawnPulseClusters(mine.x, mine.y, mine.dmg * 0.5, clusterGen, {
+        chainState: getAscension(this.P, 'pulse') === 'chain_reaction' ? { procs: 0 } : null,
+      });
+    }
+    this.slowFields.push({
+      x: mine.x,
+      y: mine.y,
+      r: 100,
+      life: 2.0,
+      maxLife: 2.0,
+    });
+    addRing(mine.x, mine.y, blastR, mine.col, 2.5, 0.4);
+    addBurst(mine.x, mine.y, mine.col, 16, 150, 3, 0.5);
   }
 
   _updateSurge(dt) {
@@ -771,7 +951,7 @@ export class Game {
         this._doBossHit(dmg, b.col, false);
         if (b.meta?.type === 'cryo') handleCryoImpact(this, b, this.boss, b.x, b.y, true);
         if (b.meta?.type === 'pulse') {
-          triggerPulseExplosion(this, b, b.x, b.y, (target, splash, col) => this.hitEnemy(target, splash, col), (splash, col) => this._doBossHit(splash, col));
+          this.handlePulseImpact(b, b.x, b.y);
         }
         if (!b.meta?.multiHit) b.hitBoss = true;
         if (!b.meta?.multiHit) b.pl = (b.pl || 0) - 1;
@@ -793,7 +973,7 @@ export class Game {
             if (!cryoStormBlocked) this.hitEnemy(e, dmg, b.col, false);
             if (b.meta?.type === 'cryo') handleCryoImpact(this, b, e, e.x, e.y, false);
             if (b.meta?.type === 'pulse') {
-              triggerPulseExplosion(this, b, e.x, e.y, (target, splash, col) => this.hitEnemy(target, splash, col), (splash, col) => this._doBossHit(splash, col));
+              this.handlePulseImpact(b, e.x, e.y);
             }
             if (!b.meta?.multiHit) b.hitIds?.add(e.id);
             if (!b.meta?.multiHit) b.pl = (b.pl || 0) - 1;
@@ -813,6 +993,21 @@ export class Game {
       updateEnemyFreezeState(e, dt, P);
       tickEnemyStatus(e, dt);
       if (e.overloadMarkT > 0) e.overloadMarkT -= dt;
+      this.slowFields.forEach(field => {
+        if (Math.hypot(e.x - field.x, e.y - field.y) < field.r) {
+          e.slowT = 0.3;
+          e.spdMult = 0.4;
+        }
+      });
+      if (e._pullTimer > 0 && e._pullTarget) {
+        const dxPull = e._pullTarget.x - e.x;
+        const dyPull = e._pullTarget.y - e.y;
+        const distPull = Math.hypot(dxPull, dyPull) || 1;
+        const travel = Math.min(distPull, (e._pullSpeed || 400) * dt);
+        e.x += dxPull / distPull * travel;
+        e.y += dyPull / distPull * travel;
+        e._pullTimer = Math.max(0, e._pullTimer - dt);
+      }
       if (e.type === 'shooter' && !e.stunned && !e.frozen) {
         e.shootT = (e.shootT || 0) - dt;
         const d = Math.sqrt(dist2(P, e));
@@ -1443,6 +1638,28 @@ export class Game {
     });
   }
 
+  drawMines() {
+    if (!this.P?._pulseMines) return;
+    const { ctx } = this;
+    this.P._pulseMines.forEach(mine => {
+      ctx.strokeStyle = mine.armed ? '#FFB627' : '#FFB62766';
+      ctx.lineWidth = mine.armed ? 2 : 1;
+      ctx.fillStyle = mine.armed ? '#FFB62722' : '#FFB62711';
+      ctx.beginPath();
+      ctx.arc(mine.x, mine.y, mine.r, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.stroke();
+      if (mine.armed) {
+        const pulse = 0.5 + 0.5 * Math.sin(this.gt * 4);
+        ctx.strokeStyle = `rgba(255, 182, 39, ${pulse * 0.4})`;
+        ctx.lineWidth = 1;
+        ctx.beginPath();
+        ctx.arc(mine.x, mine.y, mine.r + 6, 0, Math.PI * 2);
+        ctx.stroke();
+      }
+    });
+  }
+
   drawHealOrbs() {
     const { ctx } = this;
     this.healOrbs.forEach(orb => {
@@ -1455,6 +1672,22 @@ export class Game {
       ctx.beginPath();
       ctx.arc(orb.x, orb.y, orb.r * 0.45 * innerScale, 0, Math.PI * 2);
       ctx.fill();
+    });
+  }
+
+  drawSlowFields() {
+    const { ctx } = this;
+    this.slowFields.forEach(f => {
+      const alpha = (f.life / f.maxLife) * 0.2;
+      ctx.fillStyle = `rgba(255, 182, 39, ${alpha})`;
+      ctx.beginPath();
+      ctx.arc(f.x, f.y, f.r, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.strokeStyle = `rgba(255, 182, 39, ${alpha * 2})`;
+      ctx.lineWidth = 1;
+      ctx.beginPath();
+      ctx.arc(f.x, f.y, f.r, 0, Math.PI * 2);
+      ctx.stroke();
     });
   }
 
@@ -1659,10 +1892,10 @@ export class Game {
       }
 
       const tier = b.meta?.tier || 1;
-      const glow = b.meta?.type === 'cryo' ? '#9af3ff' : b.meta?.type === 'pulse' ? '#ffd16f' : b.col;
-      const drawR = b.meta?.type === 'cryo' ? b.r : b.r + (tier >= 2 ? 1 : 0) + (b.meta?.type === 'pulse' && tier >= 2 ? 1 : 0);
+      const glow = b.meta?.glowCol || (b.meta?.type === 'cryo' ? '#9af3ff' : b.meta?.type === 'pulse' ? '#ffd16f' : b.col);
+      const drawR = b.meta?.isOverload ? 20 : b.meta?.type === 'cryo' ? b.r : b.r + (tier >= 2 ? 1 : 0) + (b.meta?.type === 'pulse' && tier >= 2 ? 1 : 0);
       ctx.shadowColor = glow;
-      ctx.shadowBlur = ultraMode ? 0 : 10 + tier * 2;
+      ctx.shadowBlur = ultraMode ? 0 : (b.meta?.isOverload ? 30 : 10 + tier * 2);
       ctx.fillStyle = b.col;
       ctx.beginPath();
       ctx.arc(b.x, b.y, drawR, 0, Math.PI * 2);
@@ -1675,12 +1908,22 @@ export class Game {
         ctx.stroke();
       }
       if (!ultraMode && b.meta?.type === 'pulse' && tier >= 2) {
-        ctx.strokeStyle = `rgba(255,182,39,${0.35 + (b.pierceDmgMult || 1) * 0.25})`;
-        ctx.lineWidth = tier >= 3 ? 3 : 2;
+        ctx.strokeStyle = b.meta?.isOverload ? 'rgba(255,230,166,0.9)' : `rgba(255,182,39,${0.35 + (b.pierceDmgMult || 1) * 0.25})`;
+        ctx.lineWidth = b.meta?.isOverload ? 4 : tier >= 3 ? 3 : 2;
         ctx.beginPath();
         ctx.moveTo(b.x - b.vx * 0.018, b.y - b.vy * 0.018);
         ctx.lineTo(b.x, b.y);
         ctx.stroke();
+      }
+      if (!ultraMode && b.meta?.isOverload) {
+        ctx.save();
+        ctx.globalAlpha = 0.5;
+        ctx.strokeStyle = '#FFB627';
+        ctx.lineWidth = 2;
+        ctx.beginPath();
+        ctx.arc(b.x, b.y, b.r + 8, 0, Math.PI * 2);
+        ctx.stroke();
+        ctx.restore();
       }
       ctx.shadowBlur = 0;
     });
@@ -1871,6 +2114,16 @@ export class Game {
       ctx.fillRect(0, 0, W, H);
     }
 
+    if (this.overloadFlash > 0) {
+      ctx.fillStyle = `rgba(255,182,39,${0.15 * Math.min(1, this.overloadFlash / 0.15)})`;
+      ctx.fillRect(0, 0, W, H);
+    }
+
+    if (this.chainFlash > 0) {
+      ctx.fillStyle = `rgba(255,182,39,${0.1 * Math.min(1, this.chainFlash / 0.1)})`;
+      ctx.fillRect(0, 0, W, H);
+    }
+
     ctx.globalAlpha = 1;
   }
 
@@ -1927,7 +2180,9 @@ export class Game {
     drawParticles(ctx);
     this.drawShatterBursts();
     this.drawGems();
+    this.drawMines();
     this.drawHealOrbs();
+    this.drawSlowFields();
     drawBoss(ctx, this.boss);
     this.drawEnemies(perfMode);
     this.drawBullets(ultraMode);

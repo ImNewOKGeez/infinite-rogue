@@ -72,13 +72,28 @@ export function updateHUD(P, gt, WDEFS) {
     if (wids[i]) {
       const w = WDEFS[wids[i]];
       const ascended = !!P.ascensions?.[wids[i]];
+      const isPulseOverload = wids[i] === 'pulse' && P.ascensions?.pulse === 'overload_round';
+      const overloadCounter = isPulseOverload ? Math.max(0, Math.min(2, P._pulseOverloadCounter || 0)) : 0;
+      const overloadGlow = isPulseOverload && overloadCounter === 2
+        ? 'box-shadow:0 0 0 1px rgba(255,182,39,0.9), 0 0 14px rgba(255,182,39,0.55), inset 0 0 14px rgba(255,182,39,0.18);'
+        : '';
       const tierLabel = ascended
         ? '<span style="color:#00CFFF">ASC</span>'
         : `T${getWeaponLevel(P, wids[i])}`;
+      const overloadDots = isPulseOverload ? `
+        <div style="display:flex;justify-content:center;gap:6px;margin-top:5px;min-height:8px">
+          ${Array.from({ length: 3 }, (_, idx) => {
+            const filled = idx < overloadCounter;
+            return `<span style="width:8px;height:8px;border-radius:999px;display:block;background:${filled ? '#FFB627' : '#FFB62733'}"></span>`;
+          }).join('')}
+        </div>
+      ` : '';
       el.className = 'ws on';
-      el.innerHTML = `<div class="wi" style="color:${w.col}">${w.icon}</div><div class="wn" style="color:${w.col}">${w.name}</div><div class="wt">${tierLabel}</div>`;
+      el.style.cssText = overloadGlow;
+      el.innerHTML = `<div class="wi" style="color:${w.col}">${w.icon}</div><div class="wn" style="color:${w.col}">${w.name}</div><div class="wt">${tierLabel}</div>${overloadDots}`;
     } else {
       el.className = 'ws';
+      el.style.cssText = '';
       el.innerHTML = `<div class="wi" style="color:#282828">-</div><div class="wn" style="color:#282828">EMPTY</div>`;
     }
   }

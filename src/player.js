@@ -84,6 +84,8 @@ export function mkPlayer(W, H, char = CHARACTERS.ghost) {
     rateBonus: 1,
     ws,
     ascensions: {},
+    _pulseOverloadCounter: 0,
+    _pulseMines: [],
     ft: {}, _dr: null, _miniDr: [],
     level: 1, xp: 0, xpNext: 14,
     invT: 0,
