@@ -1,19 +1,34 @@
-import { initHUD, updateHUD, showOverlay, hideOverlay, setSurge, setBossBar } from './hud.js';
+import { initHUD, updateHUD, showOverlay, hideOverlay, setSurge, setBossBar, showDiscoveryOverlay, showRecordsScreen, showAscensionDraft } from './hud.js';
 import { initInput, initJoystick, jDir } from './input.js';
-import { CHARACTERS, getOwnedWeaponIds, getWeaponLevel, mkPlayer } from './player.js';
-import { enemies, resetEnemies, spawnEnemy, pruneEnemies, dist2, setExtraTarget, clearExtraTarget, tickEnemyStatus } from './enemies.js';
-import { WDEFS, bullets, resetBullets, resetPulseClusters, handleCryoImpact, updateCryoFields, getPulseHitDamage, triggerPulseExplosion } from './weapons.js';
-import { buildPool, applyUpgrade } from './upgrades.js';
+import { CHARACTERS, addWeapon, getAscension, getOwnedWeaponIds, getWeaponLevel, hasAscension, mkPlayer } from './player.js';
+import { enemies, resetEnemies, spawnEnemy, pruneEnemies, dist2, setExtraTarget, clearExtraTarget, tickEnemyStatus, updateEnemyFreezeState } from './enemies.js';
+import { ASCENSIONS, WDEFS, bullets, resetBullets, resetPulseClusters, handleCryoImpact, updateCryoFields, getPulseHitDamage, triggerPulseExplosion, triggerOverload, spawnBullet, applyFreezeMeter } from './weapons.js';
+import { PASSIVES, buildPool, applyUpgrade, buildAscensionPool, applyAscension } from './upgrades.js';
 import { updateParticles, addRing, addBurst, addDot, drawParticles } from './particles.js';
 import { mkBoss, updateBoss, drawBoss, hitBoss, BOSS_SPAWN_TIME, BOSS_RESPAWN_DELAY } from './boss.js';
+import { SYNERGIES, recordDiscovery, recordRun } from './progression.js';
 import {
   initAudio, resumeAudio,
   playCryoFire, playPulseFire, playEmpFire,
   playHit, playEnemyDeath, playPlayerHit, playDodge,
-  playLevelUp, playXp, playSurge, playDeath,
+  playLevelUp, playXp, playSurge, playDeath, playDiscoverySound,
+  playShatter,
   playBossWarning, playBossPhaseTwo, playBossDeath,
   startBossMusic, stopBossMusic,
 } from './audio.js';
+
+function traceEnemyShape(ctx, e) {
+  ctx.beginPath();
+  if (e.shape === 'sq') ctx.rect(e.x - e.r, e.y - e.r, e.r * 2, e.r * 2);
+  else if (e.shape === 'tri') {
+    ctx.moveTo(e.x, e.y - e.r);
+    ctx.lineTo(e.x + e.r, e.y + e.r);
+    ctx.lineTo(e.x - e.r, e.y + e.r);
+    ctx.closePath();
+  } else {
+    ctx.arc(e.x, e.y, e.r, 0, Math.PI * 2);
+  }
+}
 
 export class Game {
   constructor() {
@@ -25,6 +40,9 @@ export class Game {
     this.paused = false;
     this.killCount = 0;
     this.gems = [];
+    this.healOrbs = [];
+    this.healOrbDropCooldown = 0;
+    this.barrierHealFx = [];
     this.dmgNums = [];
     this.shake = { x: 0, y: 0, t: 0, mag: 22 };
     this.surgeActive = false;
@@ -42,14 +60,28 @@ export class Game {
     this.nextBossTime = BOSS_SPAWN_TIME;
     this.bossRespawnT = 0;
     this.cryoFields = [];
+    this.runDiscoveries = new Set();
+    this.runNewDiscoveries = new Set();
+    this.discoveryPauseQueue = [];
+    this.discoveryPauseActive = false;
+    this.shatterFlashT = 0;
+    this.shatterBursts = [];
+    this.playtestMode = false;
+    this.playtestBuild = null;
   }
 
   start() {
     initHUD();
-    const canvas = document.getElementById('c');
-    this.ctx = canvas.getContext('2d');
+    this.canvas = document.getElementById('c');
+    this.ctx = this.canvas.getContext('2d');
     this.resize();
+    if (window.visualViewport) {
+      window.visualViewport.addEventListener('resize', () => this.resize());
+    }
     window.addEventListener('resize', () => this.resize());
+    window.addEventListener('orientationchange', () => {
+      setTimeout(() => this.resize(), 100);
+    });
     window.addEventListener('touchstart', resumeAudio, { passive: true });
     initInput();
     initJoystick(
@@ -57,23 +89,40 @@ export class Game {
       document.getElementById('joystick'),
       document.getElementById('jknob')
     );
+    window.addEventListener('keydown', e => {
+      if (e.key.toLowerCase() !== 'l') return;
+      if (!this.playtestMode || !this.running || this.discoveryPauseActive) return;
+      if (document.getElementById('overlay')?.style.display === 'flex') return;
+      this.openPlaytestLab();
+    });
+    window.__game = this;
     this.showStart();
   }
 
   resize() {
-    const canvas = document.getElementById('c');
-    this.W = canvas.width = window.innerWidth;
-    this.H = canvas.height = window.innerHeight;
+    const W = window.innerWidth;
+    const H = window.innerHeight;
+    this.canvas.width = W;
+    this.canvas.height = H;
+    this.W = W;
+    this.H = H;
   }
 
-  newRun(char = CHARACTERS.ghost) {
+  newRun(char = CHARACTERS.ghost, options = {}) {
     this.selectedCharId = char.id;
+    this.playtestMode = !!options.playtest;
+    if (this.playtestMode) {
+      this.playtestBuild = sanitizePlaytestBuild(options.build || this.playtestBuild || createPlaytestBuild(char), char);
+    }
     initAudio();
     resumeAudio();
     resetEnemies();
     resetBullets();
     resetPulseClusters();
     this.gems = [];
+    this.healOrbs = [];
+    this.healOrbDropCooldown = 0;
+    this.barrierHealFx = [];
     this.dmgNums = [];
     this.gt = 0;
     this.killCount = 0;
@@ -92,18 +141,61 @@ export class Game {
     this.nextBossTime = BOSS_SPAWN_TIME;
     this.bossRespawnT = 0;
     this.cryoFields = [];
+    this.runDiscoveries = new Set();
+    this.runNewDiscoveries = new Set();
+    this.discoveryPauseQueue = [];
+    this.discoveryPauseActive = false;
+    this.shatterFlashT = 0;
+    this.shatterBursts = [];
     this.P = mkPlayer(this.W, this.H, char);
+    if (this.playtestMode) this._applyPlaytestBuildToPlayer();
+    this.P.vx = 0;
+    this.P.vy = 0;
     this.shake.x = 0;
     this.shake.y = 0;
     this.shake.t = 0;
     this.shake.mag = 22;
     this.running = true;
     this.paused = false;
+    this.setPlaytestToggleVisible(this.playtestMode);
     clearExtraTarget();
     setBossBar(null);
     hideOverlay();
     this.lt = performance.now();
     requestAnimationFrame(ts => this.loop(ts));
+  }
+
+  triggerSynergy(synergyId) {
+    this.runDiscoveries.add(synergyId);
+    const synergy = SYNERGIES.find(entry => entry.id === synergyId);
+    const isNew = recordDiscovery(synergyId);
+    if (!isNew) return false;
+    this.runNewDiscoveries.add(synergyId);
+    if (synergy) {
+      this.discoveryPauseQueue.push(synergy);
+      this._showNextDiscoveryPause();
+    }
+    playDiscoverySound();
+    return true;
+  }
+
+  _showNextDiscoveryPause() {
+    if (this.discoveryPauseActive) return;
+    const synergy = this.discoveryPauseQueue.shift();
+    if (!synergy) return;
+    this.discoveryPauseActive = true;
+    this.paused = true;
+    showDiscoveryOverlay(synergy, () => this.resumeAfterDiscovery());
+  }
+
+  resumeAfterDiscovery() {
+    hideOverlay();
+    this.discoveryPauseActive = false;
+    if (this.discoveryPauseQueue.length) {
+      this._showNextDiscoveryPause();
+      return;
+    }
+    if (this.running) this.paused = false;
   }
 
   loop(ts) {
@@ -122,12 +214,30 @@ export class Game {
     sh.x = sh.t > 0 ? (Math.random() - .5) * sh.t * sh.mag : 0;
     sh.y = sh.t > 0 ? (Math.random() - .5) * sh.t * sh.mag : 0;
 
+    const prevX = P.x;
+    const prevY = P.y;
     P.x = cl(P.x + jDir.x * P.spd * dt, P.r, W - P.r);
     P.y = cl(P.y + jDir.y * P.spd * dt, P.r, H - P.r);
+    P.vx = (P.x - prevX) / Math.max(dt, 0.0001);
+    P.vy = (P.y - prevY) / Math.max(dt, 0.0001);
     if (P.invT > 0) P.invT -= dt;
     if (P.hurtFlash > 0) P.hurtFlash = Math.max(0, P.hurtFlash - dt * 2.8);
+    if (P.barrierHealT > 0) P.barrierHealT = Math.max(0, P.barrierHealT - dt * 1.2);
+    if (P.barrierHealImpactT > 0) P.barrierHealImpactT = Math.max(0, P.barrierHealImpactT - dt * 2.4);
     if (P.hpLag > P.hp) P.hpLag = Math.max(P.hp, P.hpLag - dt * Math.max(35, (P.hpLag - P.hp) * 3.2));
     else P.hpLag = P.hp;
+    if (this.healOrbDropCooldown > 0) this.healOrbDropCooldown = Math.max(0, this.healOrbDropCooldown - dt);
+    this.barrierHealFx = this.barrierHealFx.filter(fx => {
+      fx.life -= dt;
+      return fx.life > 0;
+    });
+    if (this.shatterFlashT > 0) this.shatterFlashT = Math.max(0, this.shatterFlashT - dt);
+    this.shatterBursts = this.shatterBursts.filter(p => {
+      p.life -= dt;
+      p.x += Math.cos(p.a) * p.spd * dt;
+      p.y += Math.sin(p.a) * p.spd * dt;
+      return p.life > 0;
+    });
 
     this._updateSurge(dt);
     this._spawnEnemies(dt);
@@ -137,6 +247,7 @@ export class Game {
     updateCryoFields(this, dt);
     this._updateEnemies(dt);
     this._updateGems(dt);
+    this._updateHealOrbs(dt);
 
     updateParticles(dt);
     this.dmgNums = this.dmgNums.filter(d => { d.y -= 40 * dt; d.life -= dt; return d.life > 0; });
@@ -157,14 +268,106 @@ export class Game {
       playDodge();
       return false;
     }
-    P.hp -= dmg;
+    const remainingDamage = this.absorbWithShield(dmg);
+    if (remainingDamage <= 0) return false;
+    P.hp -= remainingDamage;
     P.invT = 0.7;
     P.hurtFlash = 1;
-    P.hpLag = Math.max(P.hpLag, P.hp + dmg);
+    P.hpLag = Math.max(P.hpLag, P.hp + remainingDamage);
     this.setShake(shakeDur, shakeMag);
     playPlayerHit();
     if (P.hp <= 0) { P.hp = 0; this.endGame(); }
     return true;
+  }
+
+  absorbWithShield(damage) {
+    const P = this.P;
+    if (!getWeaponLevel(P, 'barrier') || !P._shieldActive) return damage;
+    const absorbed = Math.min(damage, P._shieldCap || 0);
+    P._shieldCap = Math.max(0, (P._shieldCap || 0) - absorbed);
+    P._shieldAbsorbedCycle = (P._shieldAbsorbedCycle || 0) + absorbed;
+    P._shieldHitT = 0.2;
+    if (absorbed > 0) {
+      addBurst(P.x, P.y, '#C6FF00', 6, 80, 2.8, 0.18);
+      addRing(P.x, P.y, P.r + 11, '#FFFFFF', 2, 0.12);
+    }
+    if (P._shieldCap <= 0 && P._shieldActive) {
+      const tier = WDEFS.barrier.tiers[Math.min(getWeaponLevel(P, 'barrier'), 5)];
+      this._breakShield(P, tier);
+    }
+    return damage - absorbed;
+  }
+
+  _breakShield(P, tier) {
+    if (!P._shieldActive) return;
+    P._shieldActive = false;
+    P._shieldCap = Math.max(0, P._shieldCap || 0);
+    P._shieldRechargeT = tier.rechargeTime;
+    P._shieldFlashT = 0.22;
+    P._shieldHitT = 0;
+    const heal = Math.min(P.maxHp - P.hp, Math.round(P._shieldAbsorbedCycle || 0));
+    if (heal > 0) {
+      const healFrom = P.hp;
+      P.hp += heal;
+      P.hpLag = Math.max(P.hpLag, P.hp);
+      P.barrierHealFrom = healFrom;
+      P.barrierHealTo = P.hp;
+      P.barrierHealT = 1;
+      P.barrierHealImpactT = 1;
+      this._spawnBarrierHealFx(P, healFrom, P.hp);
+      this.addDN(P.x, P.y - 26, `+${heal}`, '#C6FF00', 0.8, true);
+    }
+    P._shieldAbsorbedCycle = 0;
+    addBurst(P.x, P.y, '#C6FF00', 18, 150, 4.5, 0.36);
+    addBurst(P.x, P.y, '#FFFFFF', 10, 95, 2.8, 0.18);
+    addRing(P.x, P.y, P.r + 10, '#FFFFFF', 3.5, 0.16);
+    addRing(P.x, P.y, P.r + 24, '#C6FF00', 3, 0.34);
+    this.setShake(0.22, 22);
+  }
+
+  _spawnBarrierHealFx(P, healFrom, healTo) {
+    const targetRatio = Math.max(0, Math.min(1, ((healFrom + healTo) * 0.5) / P.maxHp));
+    const count = 8;
+    for (let i = 0; i < count; i++) {
+      this.barrierHealFx.push({
+        sx: P.x,
+        sy: P.y,
+        targetRatio,
+        drift: (Math.random() - 0.5) * 36,
+        lift: 80 + Math.random() * 36,
+        size: 2.5 + Math.random() * 2,
+        delay: i * 0.025,
+        life: 0.72 + i * 0.025,
+        lt: 0.72 + i * 0.025,
+      });
+    }
+  }
+
+  _restoreShield(P) {
+    P._shieldActive = true;
+    P._shieldCap = P._shieldMaxCap;
+    P._shieldHitT = 0;
+    P._shieldAbsorbedCycle = 0;
+    addRing(P.x, P.y, P.r + 14, '#C6FF00', 3, 0.35);
+    addRing(P.x, P.y, P.r + 22, '#FFFFFF', 1.6, 0.18);
+    addBurst(P.x, P.y, '#C6FF00', 10, 90, 3.2, 0.24);
+  }
+
+  applyBossTransitionTax() {
+    const P = this.P;
+    if (!P || P.hp <= 0) return;
+    const tax = P.hp * 0.25;
+    P.hp = Math.max(1, P.hp - tax);
+    P.hurtFlash = 1;
+    P.hpLag = Math.max(P.hpLag, P.hp + tax);
+    this.setShake(0.48, 34);
+    playPlayerHit();
+  }
+
+  clearEnemyBullets() {
+    for (let i = bullets.length - 1; i >= 0; i--) {
+      if (bullets[i].enemy) bullets.splice(i, 1);
+    }
   }
 
   _updateSurge(dt) {
@@ -229,9 +432,7 @@ export class Game {
       this.bossIntroT = 3.5;
       this.bossWarned = false;
       resetEnemies();
-      for (let i = bullets.length - 1; i >= 0; i--) {
-        if (bullets[i].enemy) bullets.splice(i, 1);
-      }
+      this.clearEnemyBullets();
       startBossMusic();
     }
 
@@ -259,23 +460,27 @@ export class Game {
 
     if (!this.boss) return;
 
-    updateBoss(
-      this.boss, this.P, dt, bullets,
-      // onHitPlayer
-      (dmg) => {
+    updateBoss(this.boss, this.P, dt, {
+      onHitPlayer: (dmg) => {
         this.hitPlayer(dmg, 0.32, 30);
       },
-      // onSpawnBullet
-      (x, y, vx, vy, r, dmg, col) => {
-        bullets.push({ x, y, vx, vy, r, dmg, col, life: 3.5, pl: 0, enemy: true, meta: {} });
+      onSpawnBullet: (x, y, vx, vy, r, dmg, col, meta = {}) => {
+        bullets.push({ x, y, vx, vy, r, dmg, col, life: meta.life || 3.5, pl: 0, enemy: true, meta });
       },
-      // onPhaseTwo
-      () => {
-        this.setShake(0.5, 32);
-        this.addDN(W / 2, H / 2 - 60, '!! SIGNAL ENRAGED !!', '#D4537E', 2.5, true);
+      onPhaseChange: () => {
+        this.setShake(0.72, 40);
+        const text = this.boss?.phase === 3 ? '!!! SIGNAL OVERCLOCK !!!' : '!! SIGNAL ENRAGED !!';
+        const col = this.boss?.phase === 3 ? '#8A2BE2' : '#D4537E';
+        this.addDN(W / 2, H / 2 - 60, text, col, 2.5, true);
         playBossPhaseTwo();
-      }
-    );
+      },
+      onTransitionTax: () => {
+        this.applyBossTransitionTax();
+      },
+      onClearEnemyBullets: () => {
+        this.clearEnemyBullets();
+      },
+    });
 
     // check death
     if (this.boss.hp <= 0 && this.boss.alive) {
@@ -287,6 +492,7 @@ export class Game {
         const a = (i / 8) * Math.PI * 2;
         this.spawnGem(this.boss.x + Math.cos(a) * 30, this.boss.y + Math.sin(a) * 30, 10);
       }
+      for (let i = 0; i < 3; i++) this.spawnHealOrb(this.boss.x, this.boss.y);
       addBurst(this.boss.x, this.boss.y, this.boss.col, 24, 160, 6, 0.9);
       addRing(this.boss.x, this.boss.y, 120, '#fff', 3, 0.7);
       addRing(this.boss.x, this.boss.y, 180, this.boss.col, 2, 0.9);
@@ -300,6 +506,13 @@ export class Game {
 
   _showBossUpgrade() {
     this.paused = true;
+    const ascensionDraft = buildAscensionPool(this.P);
+    if (ascensionDraft) {
+      showAscensionDraft(ascensionDraft.weaponId, ascensionDraft.options, ascensionId => {
+        this.pickAscension(ascensionDraft.weaponId, ascensionId);
+      });
+      return;
+    }
     const pool = buildPool(this.P);
     const cards = pool.map(u => renderUpgradeCard(u, this.P, `window.__game.pickBossUpgrade('${u.id}')`)).join('');
     showOverlay(`
@@ -311,6 +524,13 @@ export class Game {
 
   pickBossUpgrade(id) {
     applyUpgrade(id, this.P);
+    hideOverlay();
+    this.paused = false;
+    if (this.P.xp >= this.P.xpNext) { const v = this.P.xp; this.P.xp = 0; this.addXp(v); }
+  }
+
+  pickAscension(weaponId, ascensionId) {
+    applyAscension(this.P, weaponId, ascensionId);
     hideOverlay();
     this.paused = false;
     if (this.P.xp >= this.P.xpNext) { const v = this.P.xp; this.P.xp = 0; this.addXp(v); }
@@ -329,13 +549,123 @@ export class Game {
       const r = w.getRate(P);
       if (r > 0 && P.ft[wid] >= 1 / r) {
         P.ft[wid] = 0;
-        w.fire(P, onHit, { addText: (...args) => this.addDN(...args) });
-        if (wid === 'cryo') playCryoFire();
+        w.fire(P, onHit, {
+          addText: (...args) => this.addDN(...args),
+          triggerSynergy: (id) => this.triggerSynergy(id),
+        });
+        if (wid === 'cryo' && !hasAscension(P, 'cryo', 'frost_field')) playCryoFire();
         else if (wid === 'pulse') playPulseFire();
         else if (wid === 'emp') playEmpFire();
       }
+      w.tick?.(P, dt, onHit, {
+        enemies,
+        addParticle: (...args) => addRing(...args),
+        applyFreezeMeter: (target, amount) => applyFreezeMeter(target, amount),
+        triggerSynergy: (id) => this.triggerSynergy(id),
+        onShieldBreak: (player, tier) => this._breakShield(player, tier),
+        onShieldRestore: (player) => this._restoreShield(player),
+      });
     });
-    if (getWeaponLevel(P, 'swarm')) WDEFS.swarm.tick(P, dt, onHit);
+  }
+
+  _tryCryoStormHit(bullet, enemy) {
+    if (!hasAscension(this.P, 'cryo', 'cryo_storm')) return false;
+    if (bullet.meta?.type !== 'cryo' || bullet.meta?.isCryoShard) return false;
+    if (!enemy.frozen) return false;
+
+    enemy.frozenTimer = 1.5;
+    this._spawnCryoStormShards(enemy.x, enemy.y);
+    addBurst(enemy.x, enemy.y, '#B8F7FF', 8, 85, 2.6, 0.24);
+    addRing(enemy.x, enemy.y, 24, '#00CFFF', 1.6, 0.18);
+    return true;
+  }
+
+  _spawnCryoStormShards(x, y) {
+    for (let i = 0; i < 8; i++) {
+      const angle = (Math.PI * 2 * i) / 8;
+      spawnBullet(
+        x,
+        y,
+        Math.cos(angle) * 280,
+        Math.sin(angle) * 280,
+        3,
+        this.P.dmg * 3,
+        '#8AF4FF',
+        0.8,
+        { type: 'cryo', tier: 5, cryoLevel: 1, pierce: 0, isCryoShard: true, freezeAmount: 0.8, angle }
+      );
+    }
+  }
+
+  _maybeApplyShatter(enemy) {
+    if (!hasAscension(this.P, 'cryo', 'shatter')) return false;
+    if (!enemy?.frozen || enemy.isBoss) return false;
+    const chance = 0.25 * Math.max(0, Math.min(1, (enemy.frozenTimer || 0) / 1.5));
+    if (Math.random() >= chance) return false;
+
+    enemy.hp = 0;
+    enemy.shattered = true;
+    this.addDN(enemy.x, enemy.y - enemy.r, 'SHATTER', '#FFFFFF', 0.85, true);
+    this.shatterFlashT = Math.max(this.shatterFlashT, 0.1);
+    this._spawnShatterBurst(enemy.x, enemy.y);
+    addRing(enemy.x, enemy.y, enemy.r + 16, '#FFFFFF', 2.4, 0.18);
+    addBurst(enemy.x, enemy.y, '#DFF9FF', 10, 70, 2.6, 0.2);
+    playShatter();
+    return true;
+  }
+
+  _spawnShatterBurst(x, y) {
+    for (let i = 0; i < 12; i++) {
+      const life = 0.18 + Math.random() * 0.08;
+      this.shatterBursts.push({
+        x,
+        y,
+        a: (Math.PI * 2 * i) / 12,
+        spd: 130 + Math.random() * 70,
+        len: 8 + Math.random() * 8,
+        life,
+        maxLife: life,
+      });
+    }
+  }
+
+  _triggerCryoNova(enemy) {
+    if (!hasAscension(this.P, 'cryo', 'cryo_nova')) return;
+
+    addRing(enemy.x, enemy.y, 120, '#00CFFF', 3, 0.4);
+    addBurst(enemy.x, enemy.y, '#00CFFF', 16, 135, 4.2, 0.4);
+    addBurst(enemy.x, enemy.y, '#E9FDFF', 10, 90, 2.8, 0.24);
+
+    enemies.forEach(target => {
+      if (target === enemy || target.hp <= 0 || target.frozen) return;
+      const dx = target.x - enemy.x;
+      const dy = target.y - enemy.y;
+      if (dx * dx + dy * dy > 120 * 120) return;
+      target.freezeCooldown = 0;
+      target.freezeMeter = target.freezeThreshold;
+    });
+  }
+
+  _getBulletEnemyCollisionRadius(b, e) {
+    if (!b.meta?.isLance) return b.r + e.r;
+    const angle = b.meta.angle || Math.atan2(b.vy, b.vx);
+    const length = b.meta.lanceLength || 170;
+    const tailX = b.x - Math.cos(angle) * length;
+    const tailY = b.y - Math.sin(angle) * length;
+    const dist = pointToSegmentDistance(e.x, e.y, tailX, tailY, b.x, b.y);
+    return dist;
+  }
+
+  _canBulletHitTarget(b, targetId, dt) {
+    if (!b.meta?.multiHit) return !b.hitIds?.has(targetId);
+    if (!b.meta.hitTimers) b.meta.hitTimers = new Map();
+    const remaining = Math.max(0, (b.meta.hitTimers.get(targetId) || 0) - dt);
+    if (remaining > 0) {
+      b.meta.hitTimers.set(targetId, remaining);
+      return false;
+    }
+    b.meta.hitTimers.set(targetId, b.meta.hitInterval || 0.12);
+    return true;
   }
 
   _updateBullets(dt) {
@@ -360,36 +690,41 @@ export class Game {
       let alive = true;
 
       // hit boss
-      if (this.boss?.alive && !b.hitBoss && dist2(b, this.boss) < (b.r + this.boss.r) ** 2) {
-        const syn = b.meta?.type === 'pulse' && this.boss.frozen;
-        let dmg = syn ? b.dmg * 3.5 : b.dmg;
+      const bossLanceDist = this.boss?.alive ? this._getBulletEnemyCollisionRadius(b, this.boss) : Infinity;
+      const hitBossByCircle = this.boss?.alive && dist2(b, this.boss) < (b.r + this.boss.r) ** 2;
+      const hitBossByLance = this.boss?.alive && b.meta?.isLance && bossLanceDist <= this.boss.r + b.r;
+      if (this.boss?.alive && this._canBulletHitTarget(b, 'boss', dt) && (hitBossByCircle || hitBossByLance)) {
+        let dmg = b.dmg;
         if (b.meta?.type === 'pulse') dmg = getPulseHitDamage(b, dmg);
-        this._doBossHit(dmg, b.col, syn);
+        this._doBossHit(dmg, b.col, false);
         if (b.meta?.type === 'cryo') handleCryoImpact(this, b, this.boss, b.x, b.y, true);
         if (b.meta?.type === 'pulse') {
           triggerPulseExplosion(this, b, b.x, b.y, (target, splash, col) => this.hitEnemy(target, splash, col), (splash, col) => this._doBossHit(splash, col));
         }
-        b.hitBoss = true;
-        b.pl = (b.pl || 0) - 1;
+        if (!b.meta?.multiHit) b.hitBoss = true;
+        if (!b.meta?.multiHit) b.pl = (b.pl || 0) - 1;
         if (b.pl < 0) { alive = false; }
       }
 
       if (alive) {
         for (let j = enemies.length - 1; j >= 0; j--) {
           const e = enemies[j];
-          if (b.hitIds?.has(e.id)) continue;
-          if (dist2(b, e) < (b.r + e.r) ** 2) {
+          if (!e) continue;
+          if (!this._canBulletHitTarget(b, e.id, dt)) continue;
+          const lanceDist = this._getBulletEnemyCollisionRadius(b, e);
+          const hitByCircle = dist2(b, e) < (b.r + e.r) ** 2;
+          const hitByLance = b.meta?.isLance && lanceDist <= e.r + b.r;
+          if (hitByCircle || hitByLance) {
+            const cryoStormBlocked = this._tryCryoStormHit(b, e);
             let dmg = b.dmg;
-            const syn = b.meta?.type === 'pulse' && e.frozen;
-            if (syn) dmg *= 3.5;
             if (b.meta?.type === 'pulse') dmg = getPulseHitDamage(b, dmg);
-            const result = this.hitEnemy(e, dmg, b.col, syn);
+            if (!cryoStormBlocked) this.hitEnemy(e, dmg, b.col, false);
             if (b.meta?.type === 'cryo') handleCryoImpact(this, b, e, e.x, e.y, false);
             if (b.meta?.type === 'pulse') {
               triggerPulseExplosion(this, b, e.x, e.y, (target, splash, col) => this.hitEnemy(target, splash, col), (splash, col) => this._doBossHit(splash, col));
             }
-            b.hitIds?.add(e.id);
-            b.pl = (b.pl || 0) - 1;
+            if (!b.meta?.multiHit) b.hitIds?.add(e.id);
+            if (!b.meta?.multiHit) b.pl = (b.pl || 0) - 1;
             if (b.pl < 0) { alive = false; break; }
           }
         }
@@ -403,6 +738,7 @@ export class Game {
   _updateEnemies(dt) {
     const { P } = this;
     enemies.forEach(e => {
+      updateEnemyFreezeState(e, dt, P);
       tickEnemyStatus(e, dt);
       if (e.overloadMarkT > 0) e.overloadMarkT -= dt;
       if (e.type === 'shooter' && !e.stunned && !e.frozen) {
@@ -425,28 +761,51 @@ export class Game {
   }
 
   _updateGems(dt) {
-    const P = this.P;
-    const now = performance.now();
     let collectedXp = 0;
-    this.gems = this.gems.filter(g => {
-      const dx = P.x - g.x, dy = P.y - g.y, d = Math.sqrt(dx * dx + dy * dy);
-      if (d < P.mag) { g.x += (P.x - g.x) * 5 * dt; g.y += (P.y - g.y) * 5 * dt; }
-      if (d < P.r + g.r) {
-        collectedXp += g.val;
-        return false;
-      }
-      return true;
+    this.gems = this._updatePickupArray(this.gems, dt, g => {
+      collectedXp += g.val;
     });
     if (collectedXp > 0) {
+      const now = performance.now();
       this.addXp(collectedXp);
       if (now - this._lastXpSound > 80) { playXp(); this._lastXpSound = now; }
     }
   }
 
+  _updateHealOrbs(dt) {
+    this.healOrbs = this._updatePickupArray(this.healOrbs, dt, () => {
+      const heal = Math.round(this.P.maxHp * 0.05);
+      this.P.hp = Math.min(this.P.maxHp, this.P.hp + heal);
+      this.P.hpLag = Math.max(this.P.hpLag, this.P.hp);
+      addBurst(this.P.x, this.P.y, '#4DFFB4', 5, 55, 2.4, 0.2);
+      addRing(this.P.x, this.P.y, this.P.r + 10, '#4DFFB4', 1.8, 0.18);
+    });
+  }
+
+  _updatePickupArray(items, dt, onCollect) {
+    const P = this.P;
+    return items.filter(item => {
+      const dx = P.x - item.x;
+      const dy = P.y - item.y;
+      const d = Math.sqrt(dx * dx + dy * dy);
+      if (d < P.mag) {
+        item.x += (P.x - item.x) * 5 * dt;
+        item.y += (P.y - item.y) * 5 * dt;
+      }
+      if (d < P.r + item.r) {
+        onCollect(item);
+        return false;
+      }
+      return true;
+    });
+  }
+
   _doBossHit(dmg, col, isSynergy = false) {
     if (this.P.char === 'bruiser' && this.P.hp < this.P.maxHp * 0.5) dmg *= 1.35;
     const now = performance.now();
+    const prevHp = this.boss.hp;
     hitBoss(this.boss, dmg, col, isSynergy);
+    if (this.boss.hp === prevHp) return { killed: false, target: this.boss, damage: 0 };
     const numCol = isSynergy ? '#FFB627' : col;
     this.addDN(this.boss.x, this.boss.y - this.boss.r, Math.round(dmg), numCol, 0.7, isSynergy);
     if (now - this._lastHitSound > 80) { playHit(isSynergy); this._lastHitSound = now; }
@@ -455,24 +814,38 @@ export class Game {
 
   hitEnemy(e, dmg, col, isSynergy = false) {
     if (this.P.char === 'bruiser' && this.P.hp < this.P.maxHp * 0.5) dmg *= 1.35;
+    if (this._maybeApplyShatter(e)) dmg = 0;
     e.hp -= dmg; e.hitFlash = 0.1;
     const numCol = isSynergy ? '#FFB627' : col === '#00CFFF' ? '#00CFFF' : col === '#BF77FF' ? '#BF77FF' : '#fff';
-    this.addDN(e.x, e.y - e.r, Math.round(dmg), numCol, 0.7, isSynergy);
+    if (dmg > 0) this.addDN(e.x, e.y - e.r, Math.round(dmg), numCol, 0.7, isSynergy);
     addBurst(e.x, e.y, col, isSynergy ? 6 : 3, isSynergy ? 90 : 60, 2.5, 0.32);
     const now = performance.now();
     if (now - this._lastHitSound > 80) { playHit(isSynergy); this._lastHitSound = now; }
     if (e.hp <= 0) {
+      if (getWeaponLevel(this.P, 'emp') >= 3 && e.empMarkT > 0 && !e._overloadTriggered) {
+        e._overloadTriggered = true;
+        triggerOverload(
+          e,
+          Math.max(dmg * 0.65, this.P.dmg * 18),
+          (target, splash, splashCol, synergyHit) => this.hitEnemy(target, splash, splashCol, synergyHit)
+        );
+      }
       this.killCount++;
       const xpVal = (this.P.char === 'hacker' && e.stunned) ? e.xp * 2 : e.xp;
-      this.spawnGem(e.x, e.y, xpVal);
-      this.spawnDeath(e.x, e.y, e.col, e.frozen);
+      if (e.frozen) this._triggerCryoNova(e);
+      this._dropEnemyPickups(e, xpVal);
+      this.spawnDeath(e.x, e.y, e.col, e.frozen, e.shattered);
       playEnemyDeath(e.frozen);
       return { killed: true, target: e, damage: dmg };
     }
     return { killed: false, target: e, damage: dmg };
   }
 
-  spawnDeath(x, y, col, frozen) {
+  spawnDeath(x, y, col, frozen, shattered = false) {
+    if (shattered) {
+      addRing(x, y, 52, '#FFFFFF', 2, 0.16);
+      return;
+    }
     const c = frozen ? '#00CFFF' : col;
     addBurst(x, y, c, 10, 90, frozen ? 4 : 3, 0.5);
     if (frozen) addRing(x, y, 44, '#00CFFF', 1.5, 0.25);
@@ -545,6 +918,43 @@ export class Game {
     this.gems.push({ x, y, r: 5, val });
   }
 
+  spawnHealOrb(x, y) {
+    this.healOrbs.push({ x, y, r: 7 });
+  }
+
+  _getHealOrbDropChance(baseChance) {
+    const timeScale = Math.max(0.25, 1 - this.gt / 240);
+    return baseChance * timeScale;
+  }
+
+  _getHealOrbDropCooldown() {
+    return Math.min(18, 6 + this.gt * 0.04);
+  }
+
+  _trySpawnHealOrbFromEnemy(x, y, baseChance) {
+    if (this.healOrbDropCooldown > 0) return false;
+    if (this.healOrbs.length >= 2) return false;
+    const chance = this._getHealOrbDropChance(baseChance);
+    if (Math.random() >= chance) return false;
+    this.spawnHealOrb(x, y);
+    this.healOrbDropCooldown = this._getHealOrbDropCooldown();
+    return true;
+  }
+
+  _dropEnemyPickups(enemy, xpVal) {
+    if (enemy.type === 'brute') {
+      this.spawnGem(enemy.x, enemy.y, xpVal);
+      this._trySpawnHealOrbFromEnemy(enemy.x, enemy.y, 0.04);
+      return;
+    }
+    if (enemy.type === 'runner' || enemy.type === 'shooter') {
+      if (this._trySpawnHealOrbFromEnemy(enemy.x, enemy.y, 0.01)) return;
+      else this.spawnGem(enemy.x, enemy.y, xpVal);
+      return;
+    }
+    this.spawnGem(enemy.x, enemy.y, xpVal);
+  }
+
   levelUp() {
     this.paused = true;
     playLevelUp();
@@ -566,95 +976,133 @@ export class Game {
 
   endGame() {
     this.running = false;
+    this.setPlaytestToggleVisible(false);
     stopBossMusic();
     playDeath();
-    const m = Math.floor(this.gt / 60), s = Math.floor(this.gt % 60);
-    const wList = formatWeaponList(this.P);
+    const recordSummary = recordRun(this.P.char, {
+      time: this.gt,
+      kills: this.killCount,
+      level: this.P.level,
+    });
+    const bestFields = new Set([
+      ...recordSummary.newGlobalBests,
+      ...recordSummary.newCharBests,
+    ]);
+    const char = CHARACTERS[this.P.char] || this.getSelectedCharacter();
+    const weaponsHtml = getOwnedWeaponIds(this.P)
+      .map(id => {
+        const weapon = WDEFS[id];
+        return `<div class="death-list-line"><span style="color:${weapon.col}">${weapon.icon} ${weapon.name}</span><strong>T${getWeaponLevel(this.P, id)}</strong></div>`;
+      })
+      .join('');
+    const synergiesHtml = this.runDiscoveries.size
+      ? [...this.runDiscoveries].map(id => {
+          const synergy = SYNERGIES.find(entry => entry.id === id);
+          if (!synergy) return '';
+          const prefix = this.runNewDiscoveries.has(id)
+            ? '<span class="death-new">★ NEW</span>'
+            : '<span class="death-known">✓</span>';
+          return `<div class="death-list-line">${prefix}<span>${synergy.label}</span></div>`;
+        }).join('')
+      : '<div class="death-empty">- none -</div>';
     showOverlay(`
-      <div class="ov-title" style="color:#E24B4A;font-size:22px">FLATLINED</div>
-      <div class="ov-sub">// connection terminated //</div>
-      <div style="text-align:center;margin-bottom:22px;line-height:2.2;font-size:12px">
-        <div>Time &nbsp;<span style="color:#1DFFD0">${m}:${s < 10 ? '0' : ''}${s}</span></div>
-        <div>Level &nbsp;<span style="color:#BF77FF">${this.P.level}</span></div>
-        <div>Kills &nbsp;<span style="color:#FFB627">${this.killCount}</span></div>
-        <div style="margin-top:6px;color:#555;font-size:10px">${wList}</div>
+      <div class="death-shell">
+        <div class="ov-title" style="color:#E24B4A;font-size:22px">FLATLINED</div>
+        <div class="death-char" style="color:${char.col}">${char.name}</div>
+        <div class="death-section">
+          <div class="panel-label">RUN STATS</div>
+          <div class="death-stats">
+            <div class="death-list-line"><span>TIME SURVIVED</span><strong>${formatRunTime(this.gt)}${renderBestMark(bestFields, 'bestTime')}</strong></div>
+            <div class="death-list-line"><span>KILLS</span><strong>${this.killCount}${renderBestMark(bestFields, 'mostKills')}</strong></div>
+            <div class="death-list-line"><span>LEVEL REACHED</span><strong>${this.P.level}${renderBestMark(bestFields, 'highestLevel')}</strong></div>
+          </div>
+        </div>
+        <div class="death-section">
+          <div class="panel-label">WEAPONS EQUIPPED</div>
+          <div class="death-stats">${weaponsHtml}</div>
+        </div>
+        <div class="death-section">
+          <div class="panel-label">SYNERGIES THIS RUN</div>
+          <div class="death-stats">${synergiesHtml}</div>
+        </div>
+        <div class="menu-actions">
+          <button class="btn" onclick="${this.playtestMode ? 'window.__game.restartPlaytestRun()' : 'window.__game.newRun(window.__game.getSelectedCharacter())'}">${this.playtestMode ? 'RESTART TEST' : 'RUN AGAIN'}</button>
+          <button class="btn btn-secondary" onclick="window.__game.showMainMenu()">MENU</button>
+        </div>
       </div>
-      <div class="menu-actions">
-        <button class="btn" onclick="window.__game.newRun(window.__game.getSelectedCharacter())">RUN AGAIN</button>
-        <button class="btn btn-secondary" onclick="window.__game.showStart()">MAIN MENU</button>
-      </div>`);
+      `, 'death-screen');
   }
 
-  showStart() {
+  showMainMenu() {
     this.running = false;
+    this.paused = false;
+    this.setPlaytestToggleVisible(false);
+    stopBossMusic();
     const char = this.getSelectedCharacter();
     const cards = Object.values(CHARACTERS).map(c => {
       const active = c.id === char.id ? ' active' : '';
       const weapon = WDEFS[c.startWeapon];
-      const passive = c.id === 'ghost'
+      const passiveCopy = c.id === 'ghost'
         ? '20% dodge chance. Freeze setups and kite hard.'
         : c.id === 'bruiser'
           ? '+35% damage under 50% HP. Heavy close-range pressure.'
           : 'Stunned enemies drop extra XP. Fast snowball control.';
+      const passiveLabel = c.id === 'ghost'
+        ? 'GHOST STEP'
+        : c.id === 'bruiser'
+          ? 'LOW HP RAMP'
+          : 'DATA LEECH';
+      const passiveValue = c.id === 'ghost'
+        ? '20% dodge chance'
+        : c.id === 'bruiser'
+          ? '+35% damage below 50% HP'
+          : '2x XP from stunned kills';
       return `<button class="char-card${active}" onclick="window.__game.selectCharacter('${c.id}')">
         <div class="char-card-top">
           <span class="char-sigil" style="color:${c.col}">◆</span>
           <span class="char-name">${c.name}</span>
+          <span class="char-tag">${c.id === char.id ? 'SELECTED' : 'READY'}</span>
         </div>
-        <div class="char-weapon" style="color:${weapon.col}">${weapon.icon} ${weapon.name}</div>
-        <div class="char-passive">${passive}</div>
+        <div class="char-compact-row">
+          <span class="char-weapon" style="color:${weapon.col}">${weapon.icon} ${weapon.name}</span>
+          <span class="char-speed">SPD ${c.spd}</span>
+        </div>
+        ${c.id === char.id ? `
+          <div class="char-inline-meta">
+            <div class="char-inline-line"><span>PASSIVE</span><strong>${passiveLabel}</strong></div>
+            <div class="char-inline-line"><span>EFFECT</span><strong>${passiveValue}</strong></div>
+            <div class="char-inline-copy">${passiveCopy}</div>
+          </div>
+        ` : ''}
       </button>`;
     }).join('');
-    const weapon = WDEFS[char.startWeapon];
-    const passiveLabel = char.id === 'ghost'
-      ? 'GHOST STEP'
-      : char.id === 'bruiser'
-        ? 'LOW HP RAMP'
-        : 'DATA LEECH';
-    const passiveValue = char.id === 'ghost'
-      ? '20% dodge chance'
-      : char.id === 'bruiser'
-        ? '+35% damage below 50% HP'
-        : '2x XP from stunned kills';
     showOverlay(`
       <div class="menu-shell">
-        <div class="menu-brand">
+        <div class="menu-brand compact">
           <div class="menu-kicker">NEURAL SURVIVAL ROGUELITE</div>
-          <div class="menu-title">INFINITE<br>ROGUE</div>
-          <div class="menu-sub">// discover builds // survive the swarm //</div>
+          <div class="menu-title">INFINITE ROGUE</div>
+          <div class="menu-sub">// choose an operator and jack in //</div>
         </div>
-        <div class="menu-grid">
-          <section class="menu-panel">
+        <section class="menu-panel menu-panel-operators">
+          <div class="menu-panel-head">
             <div class="panel-label">OPERATORS</div>
-            <div class="char-grid">${cards}</div>
-          </section>
-          <section class="menu-panel menu-panel-feature">
-            <div class="panel-label">ACTIVE LOADOUT</div>
-            <div class="feature-head">
-              <div class="feature-name" style="color:${char.col}">${char.name}</div>
-              <div class="feature-speed">SPD ${char.spd}</div>
-            </div>
-            <div class="feature-meta">
-              <div><span>START</span><strong style="color:${weapon.col}">${weapon.icon} ${weapon.name}</strong></div>
-              <div><span>PASSIVE</span><strong>${passiveLabel}</strong></div>
-              <div><span>EFFECT</span><strong>${passiveValue}</strong></div>
-            </div>
-            <div class="feature-copy">
-              Aggressive waves start immediately. Runs are built around fast weapon drafting, emergent synergies, and lasting until the board collapses on you.
-            </div>
-            <div class="intel-grid">
-              <div class="intel-card"><span>RUNS</span><strong>3-5 MIN</strong></div>
-              <div class="intel-card"><span>FLOW</span><strong>ENDLESS</strong></div>
-              <div class="intel-card"><span>STYLE</span><strong>DISCOVERY</strong></div>
-              <div class="intel-card"><span>SURGES</span><strong>+40 SEC</strong></div>
-            </div>
-            <div class="menu-actions">
-              <button class="btn" onclick="window.__game.newRun(window.__game.getSelectedCharacter())">JACK IN</button>
-            </div>
-          </section>
+            <button class="menu-link-btn" onclick="window.__game.openRecords()">RECORDS</button>
+          </div>
+          <div class="char-grid compact">${cards}</div>
+        </section>
+        <div class="menu-footer">
+          <button class="btn menu-start-btn" onclick="window.__game.newRun(window.__game.getSelectedCharacter())">JACK IN</button>
+          <button class="menu-link-btn" onclick="window.__game.openPlaytestLab()">PLAYTEST LAB</button>
         </div>
       </div>`, 'main-menu');
-    window.__game = this;
+  }
+
+  showStart() {
+    this.showMainMenu();
+  }
+
+  openRecords() {
+    showRecordsScreen(() => this.showMainMenu());
   }
 
   getSelectedCharacter() {
@@ -664,7 +1112,123 @@ export class Game {
   selectCharacter(id) {
     if (!CHARACTERS[id]) return;
     this.selectedCharId = id;
+    this.playtestBuild = sanitizePlaytestBuild(this.playtestBuild, CHARACTERS[id]);
     this.showStart();
+  }
+
+  setPlaytestToggleVisible(visible) {
+    const btn = document.getElementById('playtest-toggle');
+    if (!btn) return;
+    btn.style.display = visible ? 'block' : 'none';
+  }
+
+  restartPlaytestRun() {
+    this.newRun(this.getSelectedCharacter(), {
+      playtest: true,
+      build: this.playtestBuild,
+    });
+    this.openPlaytestLab();
+  }
+
+  startPlaytestRun() {
+    this.newRun(this.getSelectedCharacter(), {
+      playtest: true,
+      build: this.playtestBuild,
+    });
+    this.openPlaytestLab();
+  }
+
+  openPlaytestLab() {
+    const char = this.getSelectedCharacter();
+    this.playtestBuild = sanitizePlaytestBuild(this.playtestBuild, char);
+    if (this.running) this.paused = true;
+    showOverlay(renderPlaytestLab(this.playtestBuild, char, this.running), 'playtest-screen');
+  }
+
+  closePlaytestLab() {
+    hideOverlay();
+    if (this.running) this.paused = false;
+    else this.showMainMenu();
+  }
+
+  resetPlaytestBuild() {
+    this.playtestBuild = createPlaytestBuild(this.getSelectedCharacter());
+    if (this.running && this.playtestMode) this._applyPlaytestBuildToPlayer();
+    this.openPlaytestLab();
+  }
+
+  refillPlaytestVitals() {
+    if (!this.P) return;
+    this.P.hp = this.P.maxHp;
+    this.P.hpLag = this.P.maxHp;
+    this.P.invT = 0;
+    this.P.hurtFlash = 0;
+    this.openPlaytestLab();
+  }
+
+  playtestAdjustWeapon(wid, delta) {
+    const char = this.getSelectedCharacter();
+    this.playtestBuild = sanitizePlaytestBuild(this.playtestBuild, char);
+    const min = wid === char.startWeapon ? 1 : 0;
+    const current = this.playtestBuild.weapons[wid] || 0;
+    this.playtestBuild.weapons[wid] = cl(Math.round(current + delta), min, 5);
+    if (this.playtestBuild.weapons[wid] < 5) this.playtestBuild.ascensions[wid] = null;
+    if (this.running && this.playtestMode) this._applyPlaytestBuildToPlayer();
+    this.openPlaytestLab();
+  }
+
+  playtestAdjustPassive(pid, delta) {
+    const char = this.getSelectedCharacter();
+    this.playtestBuild = sanitizePlaytestBuild(this.playtestBuild, char);
+    const current = this.playtestBuild.passives[pid] || 0;
+    this.playtestBuild.passives[pid] = cl(Math.round(current + delta), 0, 8);
+    if (this.running && this.playtestMode) this._applyPlaytestBuildToPlayer();
+    this.openPlaytestLab();
+  }
+
+  playtestSetAscension(wid, ascensionId) {
+    const char = this.getSelectedCharacter();
+    this.playtestBuild = sanitizePlaytestBuild(this.playtestBuild, char);
+    if ((this.playtestBuild.weapons[wid] || 0) < 5) return;
+    this.playtestBuild.ascensions[wid] = ascensionId;
+    if (this.running && this.playtestMode) this._applyPlaytestBuildToPlayer();
+    this.openPlaytestLab();
+  }
+
+  _applyPlaytestBuildToPlayer() {
+    if (!this.playtestMode || !this.playtestBuild || !this.P) return;
+    const char = CHARACTERS[this.P.char] || this.getSelectedCharacter();
+    const prev = this.P;
+    const next = mkPlayer(this.W, this.H, char);
+    next.x = prev.x;
+    next.y = prev.y;
+    next.vx = 0;
+    next.vy = 0;
+
+    Object.entries(this.playtestBuild.weapons || {}).forEach(([wid, lvl]) => {
+      if (lvl > 0) addWeapon(next, wid, lvl);
+    });
+
+    PASSIVES.forEach(passive => {
+      const count = this.playtestBuild.passives?.[passive.id] || 0;
+      for (let i = 0; i < count; i++) applyUpgrade(`p_${passive.id}`, next);
+    });
+
+    Object.entries(this.playtestBuild.ascensions || {}).forEach(([wid, ascensionId]) => {
+      if (!ascensionId) return;
+      if ((this.playtestBuild.weapons?.[wid] || 0) < 5) return;
+      applyAscension(next, wid, ascensionId);
+    });
+
+    next.hp = next.maxHp;
+    next.hpLag = next.maxHp;
+    this.P = next;
+    this.cryoFields = [];
+    this.barrierHealFx = [];
+    resetBullets();
+    resetPulseClusters();
+    clearExtraTarget();
+    if (this.boss?.alive) setExtraTarget(this.boss);
   }
 
   draw() {
@@ -741,11 +1305,46 @@ export class Game {
       ctx.restore();
     });
 
+    if (hasAscension(P, 'cryo', 'frost_field')) {
+      ctx.save();
+      ctx.strokeStyle = 'rgba(0, 207, 255, 0.15)';
+      ctx.lineWidth = 1;
+      ctx.setLineDash([8, 6]);
+      ctx.lineDashOffset = -this.gt * 18;
+      ctx.beginPath();
+      ctx.arc(P.x, P.y, 150, 0, Math.PI * 2);
+      ctx.stroke();
+      ctx.setLineDash([]);
+      ctx.restore();
+    }
+
     drawParticles(ctx);
+
+    this.shatterBursts.forEach(p => {
+      const alpha = Math.max(0, p.life / p.maxLife);
+      const len = p.len * alpha;
+      ctx.strokeStyle = `rgba(255,255,255,${alpha})`;
+      ctx.lineWidth = 1.4;
+      ctx.beginPath();
+      ctx.moveTo(p.x, p.y);
+      ctx.lineTo(p.x + Math.cos(p.a) * len, p.y + Math.sin(p.a) * len);
+      ctx.stroke();
+    });
 
     this.gems.forEach(g => {
       ctx.fillStyle = '#7F77DD'; ctx.beginPath(); ctx.arc(g.x, g.y, g.r, 0, Math.PI * 2); ctx.fill();
       ctx.fillStyle = 'rgba(191,119,255,0.8)'; ctx.beginPath(); ctx.arc(g.x - 1, g.y - 2, 1.5, 0, Math.PI * 2); ctx.fill();
+    });
+    this.healOrbs.forEach(orb => {
+      const innerScale = Math.sin(this.gt * 6) * 0.3 + 0.7;
+      ctx.fillStyle = '#4DFFB4';
+      ctx.beginPath();
+      ctx.arc(orb.x, orb.y, orb.r, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.fillStyle = '#ffffff';
+      ctx.beginPath();
+      ctx.arc(orb.x, orb.y, orb.r * 0.45 * innerScale, 0, Math.PI * 2);
+      ctx.fill();
     });
 
     drawBoss(ctx, this.boss);
@@ -753,12 +1352,82 @@ export class Game {
     enemies.forEach(e => {
       const col = e.hitFlash > 0 ? '#fff' : e.frozen ? '#00CFFF' : e.stunned ? '#BF77FF' : e.slowT > 0 ? '#7ecfef' : e.col;
       ctx.fillStyle = col + 'bb'; ctx.strokeStyle = col; ctx.lineWidth = 1.5;
-      ctx.beginPath();
-      if (e.shape === 'sq') ctx.rect(e.x - e.r, e.y - e.r, e.r * 2, e.r * 2);
-      else if (e.shape === 'tri') { ctx.moveTo(e.x, e.y - e.r); ctx.lineTo(e.x + e.r, e.y + e.r); ctx.lineTo(e.x - e.r, e.y + e.r); ctx.closePath(); }
-      else ctx.arc(e.x, e.y, e.r, 0, Math.PI * 2);
+      traceEnemyShape(ctx, e);
       ctx.fill(); ctx.stroke();
-      if (!perfMode && e.frozen) { ctx.strokeStyle = 'rgba(0,207,255,0.5)'; ctx.lineWidth = 3; ctx.beginPath(); ctx.arc(e.x, e.y, e.r + 3, 0, Math.PI * 2); ctx.stroke(); }
+      if (!perfMode && !e.frozen && e.frostLevel > 0) {
+        const overlayAlpha = e.frostLevel === 3 ? 0.55 : e.frostLevel === 2 ? 0.35 : 0.15;
+        ctx.fillStyle = `rgba(0, 207, 255, ${overlayAlpha})`;
+        traceEnemyShape(ctx, e);
+        ctx.fill();
+
+        if (e.frostLevel >= 2) {
+          ctx.save();
+          ctx.globalAlpha = e.frostLevel === 3 ? 0.8 : 0.5;
+          ctx.strokeStyle = '#00CFFF';
+          ctx.lineWidth = e.frostLevel === 3 ? 2 : 1;
+          ctx.beginPath();
+          ctx.arc(e.x, e.y, e.r + (e.frostLevel === 3 ? 3 : 2), 0, Math.PI * 2);
+          ctx.stroke();
+          ctx.restore();
+        }
+
+        if (e.frostLevel === 3) {
+          if ((e._frostParticleT || 0) <= this.gt) {
+            e._frostParticleT = this.gt + 0.3;
+            const a = Math.random() * Math.PI * 2;
+            addDot(
+              e.x + Math.cos(a) * e.r,
+              e.y + Math.sin(a) * e.r,
+              '#00CFFF',
+              2.2,
+              0.45
+            );
+          }
+        } else {
+          e._frostParticleT = 0;
+        }
+      } else {
+        e._frostParticleT = 0;
+      }
+      if (!perfMode && e.frozen) {
+        ctx.fillStyle = e.permafrost ? 'rgba(170, 240, 255, 0.78)' : 'rgba(0, 207, 255, 0.65)';
+        traceEnemyShape(ctx, e);
+        ctx.fill();
+        ctx.strokeStyle = e.permafrost ? 'rgba(235, 253, 255, 0.95)' : 'rgba(0,207,255,0.85)';
+        ctx.lineWidth = e.permafrost ? 3.5 : 3;
+        ctx.beginPath();
+        ctx.arc(e.x, e.y, e.r + 3, 0, Math.PI * 2);
+        ctx.stroke();
+        ctx.save();
+        ctx.strokeStyle = e.permafrost ? 'rgba(255,255,255,0.98)' : 'rgba(215, 248, 255, 0.95)';
+        ctx.lineWidth = e.permafrost ? 1.9 : 1.6;
+        for (let i = 0; i < 4; i++) {
+          const a = this.gt * 1.8 + e.id * 0.23 + (i / 4) * Math.PI * 2;
+          const innerR = e.r + 2;
+          const outerR = e.r + 8 + (i % 2) * 2;
+          ctx.beginPath();
+          ctx.moveTo(e.x + Math.cos(a) * innerR, e.y + Math.sin(a) * innerR);
+          ctx.lineTo(e.x + Math.cos(a) * outerR, e.y + Math.sin(a) * outerR);
+          ctx.stroke();
+        }
+        if (e.permafrost) {
+          ctx.strokeStyle = 'rgba(195, 245, 255, 0.95)';
+          ctx.lineWidth = 1.6;
+          for (let i = 0; i < 6; i++) {
+            const a = (i / 6) * Math.PI * 2;
+            const crystalR = e.r + 11 + ((i % 2) * 3);
+            const px = e.x + Math.cos(a) * crystalR;
+            const py = e.y + Math.sin(a) * crystalR;
+            ctx.beginPath();
+            ctx.moveTo(px, py);
+            ctx.lineTo(px - Math.cos(a) * 8 + Math.cos(a + Math.PI / 2) * 4, py - Math.sin(a) * 8 + Math.sin(a + Math.PI / 2) * 4);
+            ctx.lineTo(px - Math.cos(a) * 8 - Math.cos(a + Math.PI / 2) * 4, py - Math.sin(a) * 8 - Math.sin(a + Math.PI / 2) * 4);
+            ctx.closePath();
+            ctx.stroke();
+          }
+        }
+        ctx.restore();
+      }
       if (!perfMode && e.stunned) { ctx.strokeStyle = 'rgba(191,119,255,0.4)'; ctx.lineWidth = 3; ctx.beginPath(); ctx.arc(e.x, e.y, e.r + 3, 0, Math.PI * 2); ctx.stroke(); }
       if (!perfMode && e.empMarkT > 0) {
         const pulse = 0.45 + 0.55 * Math.sin(this.gt * 10 + e.id * 0.7);
@@ -805,6 +1474,57 @@ export class Game {
       ctx.beginPath(); ctx.arc(b.x, b.y, b.r, 0, Math.PI * 2); ctx.fill(); ctx.stroke();
     });
     bullets.filter(b => !b.enemy).forEach(b => {
+      if (b.meta?.isLance) {
+        const angle = b.meta.angle || Math.atan2(b.vy, b.vx);
+        const length = b.meta.lanceLength || 220;
+        const tailX = b.x - Math.cos(angle) * length;
+        const tailY = b.y - Math.sin(angle) * length;
+        ctx.save();
+        ctx.shadowColor = '#00CFFF';
+        ctx.shadowBlur = 18;
+        ctx.strokeStyle = 'rgba(0, 207, 255, 0.92)';
+        ctx.lineWidth = 6;
+        ctx.beginPath();
+        ctx.moveTo(tailX, tailY);
+        ctx.lineTo(b.x, b.y);
+        ctx.stroke();
+        ctx.strokeStyle = 'rgba(185, 247, 255, 0.95)';
+        ctx.lineWidth = 2.6;
+        ctx.beginPath();
+        ctx.moveTo(tailX, tailY);
+        ctx.lineTo(b.x, b.y);
+        ctx.stroke();
+        ctx.strokeStyle = 'rgba(235, 253, 255, 0.8)';
+        ctx.lineWidth = 1;
+        ctx.setLineDash([14, 10]);
+        ctx.lineDashOffset = -this.gt * 30;
+        ctx.beginPath();
+        ctx.moveTo(tailX, tailY);
+        ctx.lineTo(b.x, b.y);
+        ctx.stroke();
+        ctx.setLineDash([]);
+        ctx.restore();
+        return;
+      }
+      if (b.meta?.isCryoShard) {
+        const angle = b.meta.angle || Math.atan2(b.vy, b.vx);
+        ctx.save();
+        ctx.shadowColor = '#BDF7FF';
+        ctx.shadowBlur = 10;
+        ctx.strokeStyle = '#BDF7FF';
+        ctx.lineWidth = 1.5;
+        ctx.beginPath();
+        ctx.moveTo(b.x - Math.cos(angle) * 6, b.y - Math.sin(angle) * 6);
+        ctx.lineTo(b.x + Math.cos(angle) * 4, b.y + Math.sin(angle) * 4);
+        ctx.stroke();
+        ctx.strokeStyle = 'rgba(255,255,255,0.9)';
+        ctx.beginPath();
+        ctx.moveTo(b.x - Math.cos(angle + Math.PI / 2) * 3, b.y - Math.sin(angle + Math.PI / 2) * 3);
+        ctx.lineTo(b.x + Math.cos(angle + Math.PI / 2) * 3, b.y + Math.sin(angle + Math.PI / 2) * 3);
+        ctx.stroke();
+        ctx.restore();
+        return;
+      }
       const tier = b.meta?.tier || 1;
       const glow = b.meta?.type === 'cryo' ? '#9af3ff' : b.meta?.type === 'pulse' ? '#ffd16f' : b.col;
       const drawR = b.meta?.type === 'cryo'
@@ -860,6 +1580,64 @@ export class Game {
     ctx.strokeStyle = 'rgba(0,255,200,0.35)'; ctx.lineWidth = 2; ctx.stroke();
     ctx.shadowBlur = 0;
 
+    if (getWeaponLevel(P, 'barrier')) {
+      const baseRadius = P.r + 9;
+      if (P._shieldFlashT > 0) {
+        ctx.strokeStyle = `rgba(255,255,255,${Math.min(1, P._shieldFlashT / 0.15)})`;
+        ctx.lineWidth = 4.5;
+        ctx.beginPath();
+        ctx.arc(P.x, P.y, baseRadius + 4, 0, Math.PI * 2);
+        ctx.stroke();
+        ctx.strokeStyle = `rgba(198,255,0,${Math.min(1, P._shieldFlashT / 0.22)})`;
+        ctx.lineWidth = 6;
+        ctx.beginPath();
+        ctx.arc(P.x, P.y, baseRadius + 8, 0, Math.PI * 2);
+        ctx.stroke();
+        ctx.setLineDash([]);
+      } else if (P._shieldActive) {
+        const pulse = Math.sin(this.gt * 3) * 2.6;
+        const capRatio = Math.max(0.12, (P._shieldCap || 0) / Math.max(1, P._shieldMaxCap || 1));
+        const hitBoost = (P._shieldHitT || 0) > 0 ? Math.min(0.7, P._shieldHitT * 3.2) : 0;
+        ctx.fillStyle = `rgba(198,255,0,${0.06 + capRatio * 0.08 + hitBoost * 0.12})`;
+        ctx.beginPath();
+        ctx.arc(P.x, P.y, baseRadius + 5 + pulse * 0.4, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.strokeStyle = `rgba(198,255,0,${Math.min(1, 0.42 + capRatio * 0.48 + hitBoost)})`;
+        ctx.lineWidth = 4;
+        ctx.beginPath();
+        ctx.arc(P.x, P.y, baseRadius + pulse, 0, Math.PI * 2);
+        ctx.stroke();
+        ctx.strokeStyle = `rgba(255,255,255,${0.18 + capRatio * 0.22 + hitBoost * 0.55})`;
+        ctx.lineWidth = 2;
+        ctx.beginPath();
+        ctx.arc(P.x, P.y, baseRadius - 3 + pulse * 0.35, 0, Math.PI * 2);
+        ctx.stroke();
+        for (let i = 0; i < 5; i++) {
+          const a = this.gt * 2.8 + (i / 5) * Math.PI * 2;
+          const orbitR = baseRadius + 5 + pulse * 0.35;
+          const px = P.x + Math.cos(a) * orbitR;
+          const py = P.y + Math.sin(a) * orbitR;
+          ctx.fillStyle = `rgba(198,255,0,${0.45 + hitBoost * 0.35})`;
+          ctx.beginPath();
+          ctx.arc(px, py, 1.8 + hitBoost, 0, Math.PI * 2);
+          ctx.fill();
+        }
+      } else {
+        ctx.setLineDash([10, 6]);
+        ctx.strokeStyle = 'rgba(198,255,0,0.22)';
+        ctx.lineWidth = 3;
+        ctx.beginPath();
+        ctx.arc(P.x, P.y, baseRadius, 0, Math.PI * 2);
+        ctx.stroke();
+        ctx.strokeStyle = 'rgba(255,255,255,0.08)';
+        ctx.lineWidth = 1.5;
+        ctx.beginPath();
+        ctx.arc(P.x, P.y, baseRadius + 5, 0, Math.PI * 2);
+        ctx.stroke();
+        ctx.setLineDash([]);
+      }
+    }
+
     ctx.textAlign = 'center';
     this.dmgNums.forEach(d => {
       ctx.globalAlpha = Math.min(1, d.life / 0.35);
@@ -904,7 +1682,77 @@ export class Game {
       ctx.shadowBlur = 0;
     }
 
+    if (this.shatterFlashT > 0) {
+      ctx.fillStyle = `rgba(255,255,255,${0.1 * Math.min(1, this.shatterFlashT / 0.1)})`;
+      ctx.fillRect(-8, -8, W + 16, H + 16);
+    }
+
     ctx.globalAlpha = 1;
+    ctx.restore();
+    this._drawBarrierHealFx(ctx);
+  }
+
+  _drawBarrierHealFx(ctx) {
+    if (!this.barrierHealFx.length) return;
+    const hpWrap = document.getElementById('hpbar-wrap');
+    if (!hpWrap) return;
+    const rect = hpWrap.getBoundingClientRect();
+    const targetY = rect.top + rect.height * 0.5;
+
+    ctx.save();
+    for (const fx of this.barrierHealFx) {
+      const elapsed = fx.lt - fx.life;
+      const rawT = Math.max(0, Math.min(1, elapsed / fx.lt));
+      const t = Math.max(0, Math.min(1, (rawT - fx.delay) / Math.max(0.15, 1 - fx.delay)));
+      if (t <= 0) continue;
+
+      const tx = rect.left + rect.width * fx.targetRatio;
+      const cx = (fx.sx + tx) * 0.5 + fx.drift;
+      const cy = Math.min(fx.sy, targetY) - fx.lift;
+      const x = quadPoint(fx.sx, cx, tx, t);
+      const y = quadPoint(fx.sy, cy, targetY, t);
+      const trailT = Math.max(0, t - 0.16);
+      const trailX = quadPoint(fx.sx, cx, tx, trailT);
+      const trailY = quadPoint(fx.sy, cy, targetY, trailT);
+      const alpha = Math.max(0, fx.life / fx.lt);
+
+      ctx.strokeStyle = `rgba(198,255,0,${0.18 * alpha})`;
+      ctx.lineWidth = 2.4;
+      ctx.beginPath();
+      ctx.moveTo(trailX, trailY);
+      ctx.lineTo(x, y);
+      ctx.stroke();
+
+      ctx.fillStyle = `rgba(255,255,255,${0.52 * alpha})`;
+      ctx.beginPath();
+      ctx.arc(x, y, fx.size * 0.55, 0, Math.PI * 2);
+      ctx.fill();
+
+      ctx.fillStyle = `rgba(198,255,0,${0.95 * alpha})`;
+      ctx.beginPath();
+      ctx.arc(x, y, fx.size, 0, Math.PI * 2);
+      ctx.fill();
+    }
+
+    if (this.P?.barrierHealT > 0) {
+      const alpha = Math.max(0, this.P.barrierHealT);
+      const startX = this.P.x;
+      const startY = this.P.y - 6;
+      const endX = rect.left + rect.width * Math.max(0, Math.min(1, ((this.P.barrierHealFrom || 0) + (this.P.barrierHealTo || 0)) * 0.5 / this.P.maxHp));
+      const endY = targetY;
+      ctx.strokeStyle = `rgba(198,255,0,${0.15 * alpha})`;
+      ctx.lineWidth = 7;
+      ctx.beginPath();
+      ctx.moveTo(startX, startY);
+      ctx.lineTo(endX, endY);
+      ctx.stroke();
+      ctx.strokeStyle = `rgba(255,255,255,${0.08 * alpha})`;
+      ctx.lineWidth = 3;
+      ctx.beginPath();
+      ctx.moveTo(startX, startY);
+      ctx.lineTo(endX, endY);
+      ctx.stroke();
+    }
     ctx.restore();
   }
 }
@@ -916,12 +1764,17 @@ function wStats(wid, lvl, p) {
     pulse: 0.45 * rb,
     emp: 0.4 * rb,
     swarm: 0,
+    barrier: 0,
   };
   const r = (rates[wid] || 0).toFixed(1);
   if (wid === 'cryo') return [`Rate: ${r}/s`, `Projectiles: ${Math.min(5, Math.max(1, lvl))}`, lvl >= 2 ? 'Spread: widening fan' : 'Slow: 50% for 2s', 'Pierce: 1 enemy'];
   if (wid === 'pulse') return [`Rate: ${r}/s`, `Dmg: ${Math.round(p.dmg * (28 + lvl * 10))}`, 'Impact: heavy explosive shot', lvl >= 2 ? 'Cluster: splits on impact' : 'Cooldown: long', lvl >= 5 ? 'Cluster: four split layers' : lvl >= 4 ? 'Cluster: three split layers' : lvl >= 3 ? 'Cluster: bomblets split again' : ''];
   if (wid === 'emp') return [`Rate: ${r}/s`, `Radius: ${[0, 160, 220, 280, 340, 400][Math.min(lvl, 5)]}px`, `Stun: ${(2.0 + lvl * 0.5).toFixed(1)}s`, lvl >= 5 ? 'Affected enemies emit shockwaves' : ''];
   if (wid === 'swarm') return [`Drones: ${Math.min(6, 1 + lvl)}`, `Dmg/hit: ${Math.round(p.dmg * (28 + lvl * 14))}`, 'Orbit: auto-seek', lvl >= 2 ? 'Upgrade: +1 drone' : ''];
+  if (wid === 'barrier') {
+    const tier = WDEFS.barrier.tiers[Math.min(lvl, 5)];
+    return [`Rate: ${r}/s`, `Absorb: ${tier.maxCap} dmg`, `Active: ${tier.activeDuration}s`, `Recharge: ${tier.rechargeTime}s`];
+  }
   return [];
 }
 
@@ -954,6 +1807,13 @@ function wDesc(wid, lvl) {
       3: 'Adds a fourth orbiting swarm drone.',
       4: 'Adds a fifth orbiting swarm drone.',
       5: 'Adds a sixth orbiting swarm drone.'
+    },
+    barrier: {
+      1: 'Absorbs 40 damage per cycle. Active 5s, recharge 8s.',
+      2: 'Absorbs 65 damage per cycle. Active 6s, recharge 7s.',
+      3: 'Absorbs 95 damage per cycle. Active 7s, recharge 6s.',
+      4: 'Absorbs 130 damage per cycle. Active 8s, recharge 5s.',
+      5: 'Absorbs 175 damage per cycle. Active 10s, recharge 4s.'
     }
   }[wid] || {})[lvl] || '';
 }
@@ -982,7 +1842,8 @@ function weaponUnlockDesc(wid) {
     cryo: 'Fires slowing Cryo lances that scale by adding more projectiles and wider spread.',
     pulse: 'Launches a heavy explosive Pulse shell that upgrades into cluster-bomb bursts.',
     emp: 'Sends a radial EMP stun that upgrades mostly through larger and larger control radius.',
-    swarm: 'Deploys orbiting drones that keep scaling by adding more swarm bodies.'
+    swarm: 'Deploys orbiting drones that keep scaling by adding more swarm bodies.',
+    barrier: 'Wraps the player in a cycling shield that absorbs damage, then recharges after breaking.'
   }[wid] || 'Unlocks a new weapon.');
 }
 function passiveHeadline(id) {
@@ -1002,7 +1863,213 @@ function formatWeaponList(p) {
     .join(' · ');
 }
 
+function formatRunTime(seconds) {
+  const total = Math.max(0, Math.floor(seconds || 0));
+  const mins = Math.floor(total / 60);
+  const secs = total % 60;
+  return `${mins}:${secs < 10 ? '0' : ''}${secs}`;
+}
+
+function renderBestMark(bestFields, field) {
+  return bestFields.has(field) ? ' <span class="death-best">★ BEST</span>' : '';
+}
+
+function createPlaytestBuild(char) {
+  const build = {
+    charId: char.id,
+    weapons: Object.fromEntries(Object.keys(WDEFS).map(wid => [wid, 0])),
+    passives: Object.fromEntries(PASSIVES.map(passive => [passive.id, 0])),
+    ascensions: Object.fromEntries(Object.keys(WDEFS).map(wid => [wid, null])),
+  };
+  build.weapons[char.startWeapon] = 1;
+  return build;
+}
+
+function sanitizePlaytestBuild(build, char) {
+  const base = createPlaytestBuild(char);
+  const next = {
+    charId: char.id,
+    weapons: { ...base.weapons, ...(build?.weapons || {}) },
+    passives: { ...base.passives, ...(build?.passives || {}) },
+    ascensions: { ...base.ascensions, ...(build?.ascensions || {}) },
+  };
+
+  Object.keys(next.weapons).forEach(wid => {
+    const min = wid === char.startWeapon ? 1 : 0;
+    next.weapons[wid] = cl(Math.round(next.weapons[wid] || 0), min, 5);
+  });
+
+  Object.keys(next.passives).forEach(pid => {
+    next.passives[pid] = cl(Math.round(next.passives[pid] || 0), 0, 8);
+  });
+
+  Object.keys(next.ascensions).forEach(wid => {
+    const options = ASCENSIONS[wid] || [];
+    const chosen = next.ascensions[wid];
+    if ((next.weapons[wid] || 0) < 5) {
+      next.ascensions[wid] = null;
+      return;
+    }
+    next.ascensions[wid] = options.some(option => option.id === chosen) ? chosen : null;
+  });
+
+  return next;
+}
+
+function previewPlaytestPlayer(char, build) {
+  const p = mkPlayer(0, 0, char);
+  const safeBuild = sanitizePlaytestBuild(build, char);
+  Object.entries(safeBuild.weapons).forEach(([wid, lvl]) => {
+    if (lvl > 0) addWeapon(p, wid, lvl);
+  });
+  PASSIVES.forEach(passive => {
+    const count = safeBuild.passives[passive.id] || 0;
+    for (let i = 0; i < count; i++) passive.apply(p);
+  });
+  Object.entries(safeBuild.ascensions || {}).forEach(([wid, ascensionId]) => {
+    if (!ascensionId) return;
+    if ((safeBuild.weapons[wid] || 0) < 5) return;
+    applyAscension(p, wid, ascensionId);
+  });
+  p.hp = p.maxHp;
+  p.hpLag = p.maxHp;
+  return p;
+}
+
+function renderPlaytestLab(build, char, isRunActive) {
+  const safeBuild = sanitizePlaytestBuild(build, char);
+  const summary = previewPlaytestPlayer(char, safeBuild);
+  const ascensionCards = Object.entries(ASCENSIONS).map(([wid, options]) => {
+    const weapon = WDEFS[wid];
+    const lvl = safeBuild.weapons[wid] || 0;
+    const selected = safeBuild.ascensions?.[wid] || null;
+    const locked = lvl < 5;
+    const optionButtons = options.map(option => `
+      <button
+        class="playtest-ascension-option${selected === option.id ? ' active' : ''}"
+        ${locked ? 'disabled' : ''}
+        onclick="window.__game.playtestSetAscension('${wid}', '${option.id}')">
+        <span>${option.name}</span>
+        <small>${option.description}</small>
+      </button>
+    `).join('');
+    return `
+      <div class="playtest-card">
+        <div class="playtest-card-top">
+          <div>
+            <div class="playtest-item-name" style="color:${weapon.col}">${weapon.icon} ${weapon.name}</div>
+            <div class="playtest-item-copy">${locked ? 'Reach Tier 5 in the lab to enable ascensions.' : 'Choose one transformation to test.'}</div>
+          </div>
+          <button class="playtest-clear" ${selected ? '' : 'disabled'} onclick="window.__game.playtestSetAscension('${wid}', null)">CLEAR</button>
+        </div>
+        <div class="playtest-item-copy">${selected ? `Selected: ${options.find(option => option.id === selected)?.name || 'None'}` : 'No ascension selected'}</div>
+        <div class="playtest-ascension-list">${optionButtons}</div>
+      </div>`;
+  }).join('');
+
+  const weaponCards = Object.keys(WDEFS).map(wid => {
+    const weapon = WDEFS[wid];
+    const lvl = safeBuild.weapons[wid] || 0;
+    const min = wid === char.startWeapon ? 1 : 0;
+    const canDown = lvl > min;
+    const stats = lvl > 0 ? wStats(wid, lvl, summary) : [weaponUnlockDesc(wid)];
+    return `
+      <div class="playtest-card">
+        <div class="playtest-card-top">
+          <div>
+            <div class="playtest-item-name" style="color:${weapon.col}">${weapon.icon} ${weapon.name}</div>
+            <div class="playtest-item-copy">${lvl > 0 ? `Tier ${lvl}` : 'Not equipped'}</div>
+          </div>
+          <div class="playtest-stepper">
+            <button class="playtest-step" ${canDown ? '' : 'disabled'} onclick="window.__game.playtestAdjustWeapon('${wid}', -1)">-</button>
+            <span class="playtest-value">${lvl}</span>
+            <button class="playtest-step" ${lvl < 5 ? '' : 'disabled'} onclick="window.__game.playtestAdjustWeapon('${wid}', 1)">+</button>
+          </div>
+        </div>
+        <div class="playtest-item-copy">${wid === char.startWeapon ? 'Starter weapon cannot go below Tier 1.' : 'Tap to slot in or remove this weapon instantly.'}</div>
+        <div class="playtest-stats">${stats.filter(Boolean).slice(0, 4).map(line => `<span>${line}</span>`).join('')}</div>
+      </div>`;
+  }).join('');
+
+  const passiveCards = PASSIVES.map(passive => {
+    const count = safeBuild.passives[passive.id] || 0;
+    const previewLines = passive.apply(previewPlaytestPlayer(char, safeBuild)).slice(0, 2);
+    return `
+      <div class="playtest-card">
+        <div class="playtest-card-top">
+          <div>
+            <div class="playtest-item-name">${passive.label}</div>
+            <div class="playtest-item-copy">Stacks instantly for feel testing.</div>
+          </div>
+          <div class="playtest-stepper">
+            <button class="playtest-step" ${count > 0 ? '' : 'disabled'} onclick="window.__game.playtestAdjustPassive('${passive.id}', -1)">-</button>
+            <span class="playtest-value">${count}</span>
+            <button class="playtest-step" ${count < 8 ? '' : 'disabled'} onclick="window.__game.playtestAdjustPassive('${passive.id}', 1)">+</button>
+          </div>
+        </div>
+        <div class="playtest-stats">${previewLines.map(line => `<span>${line}</span>`).join('')}</div>
+      </div>`;
+  }).join('');
+
+  const actions = isRunActive
+    ? `
+      <button class="btn" onclick="window.__game.closePlaytestLab()">RESUME TEST</button>
+      <button class="btn btn-secondary" onclick="window.__game.refillPlaytestVitals()">REFILL HP</button>
+      <button class="btn btn-secondary" onclick="window.__game.resetPlaytestBuild()">RESET BUILD</button>
+      <button class="btn btn-secondary" onclick="window.__game.showMainMenu()">MENU</button>`
+    : `
+      <button class="btn" onclick="window.__game.startPlaytestRun()">START TEST SESSION</button>
+      <button class="btn btn-secondary" onclick="window.__game.resetPlaytestBuild()">RESET BUILD</button>
+      <button class="btn btn-secondary" onclick="window.__game.showMainMenu()">BACK</button>`;
+
+  return `
+    <div class="playtest-shell">
+      <div class="records-head">
+        <div class="ov-title">PLAYTEST LAB</div>
+        <div class="ov-sub">// quick build toggles // no full run required //</div>
+      </div>
+      <section class="playtest-summary">
+        <div>
+          <div class="panel-label">ACTIVE OPERATOR</div>
+          <div class="playtest-summary-name" style="color:${char.col}">${char.name}</div>
+        </div>
+        <div class="playtest-summary-stats">
+          <span>SPD ${summary.spd}</span>
+          <span>DMG x${summary.dmg.toFixed(2)}</span>
+          <span>DODGE ${Math.round(summary.dodge * 100)}%</span>
+          <span>HP ${summary.maxHp}</span>
+        </div>
+      </section>
+      <section class="records-panel">
+        <div class="panel-label">WEAPONS</div>
+        <div class="playtest-grid">${weaponCards}</div>
+      </section>
+      <section class="records-panel">
+        <div class="panel-label">PASSIVES</div>
+        <div class="playtest-grid">${passiveCards}</div>
+      </section>
+      <section class="records-panel">
+        <div class="panel-label">ASCENSIONS</div>
+        <div class="playtest-grid">${ascensionCards}</div>
+      </section>
+      <div class="menu-actions">${actions}</div>
+      ${isRunActive ? '<div class="playtest-hint">Tap LAB or press L during a test run to reopen this panel.</div>' : ''}
+    </div>`;
+}
+
 function cl(v, a, b) { return Math.max(a, Math.min(b, v)); }
+function pointToSegmentDistance(px, py, ax, ay, bx, by) {
+  const abx = bx - ax;
+  const aby = by - ay;
+  const abLenSq = abx * abx + aby * aby || 1;
+  const t = Math.max(0, Math.min(1, ((px - ax) * abx + (py - ay) * aby) / abLenSq));
+  const cx = ax + abx * t;
+  const cy = ay + aby * t;
+  const dx = px - cx;
+  const dy = py - cy;
+  return Math.sqrt(dx * dx + dy * dy);
+}
+function quadPoint(a, c, b, t) { return ((1 - t) * (1 - t) * a) + (2 * (1 - t) * t * c) + (t * t * b); }
 
 
 

@@ -1,9 +1,44 @@
-import { enemies, nearest, dist2, pruneEnemies, getExtraTarget, applySlow } from './enemies.js';
+import { enemies, nearest, dist2, pruneEnemies, getExtraTarget, applySlow, ensureFreezeState } from './enemies.js';
 import { addRing, addBurst, addDot } from './particles.js';
-import { getWeaponLevel } from './player.js';
+import { getAscension, getWeaponLevel } from './player.js';
 
 export const bullets = [];
 export const pulseClusters = [];
+
+export const ASCENSIONS = {
+  cryo: [
+    {
+      id: 'cryo_storm',
+      name: 'CRYO STORM',
+      description: 'Hitting a frozen enemy resets their freeze timer and releases freeze-building shards in all directions. No damage on frozen hits.',
+    },
+    {
+      id: 'permafrost',
+      name: 'PERMAFROST',
+      description: 'Frozen enemies never thaw. They remain frozen until killed. High burst damage required.',
+    },
+    {
+      id: 'cryo_nova',
+      name: 'CRYO NOVA',
+      description: 'Frozen enemies that die explode in an ice nova, instantly freezing all enemies within 120px.',
+    },
+    {
+      id: 'glacial_lance',
+      name: 'GLACIAL LANCE',
+      description: 'Replaces spread projectiles with a single screen-wide piercing beam originating from the player. Lower fire rate, hits everything in the line.',
+    },
+    {
+      id: 'frost_field',
+      name: 'FROST FIELD',
+      description: 'Removes all projectiles. Generates a 150px frost aura around the player that builds freeze meter and slows all enemies inside it.',
+    },
+    {
+      id: 'shatter',
+      name: 'SHATTER',
+      description: 'Frozen enemies have a chance to instantly die on any hit. Chance scales with freeze time remaining - max 25% at moment of freeze, drops to zero as timer expires.',
+    },
+  ]
+};
 
 export function resetBullets() { bullets.length = 0; }
 export function resetPulseClusters() { pulseClusters.length = 0; }
@@ -11,6 +46,10 @@ export function resetPulseClusters() { pulseClusters.length = 0; }
 function mkBullet(x, y, vx, vy, r, dmg, col, life, meta) {
   const pl = meta?.pierce || 0;
   bullets.push({ x, y, vx, vy, r, dmg, col, life, pl, meta, hitIds: pl > 0 ? new Set() : null });
+}
+
+export function spawnBullet(x, y, vx, vy, r, dmg, col, life, meta) {
+  mkBullet(x, y, vx, vy, r, dmg, col, life, meta);
 }
 
 function getCryoProjectileCount(lvl) {
@@ -29,6 +68,25 @@ function getSwarmCount(lvl) {
   return Math.min(6, 1 + lvl);
 }
 
+function getBarrierTier(lvl) {
+  const tier = Math.min(Math.max(lvl, 1), 5);
+  return {
+    1: { maxCap: 40, activeDuration: 5, rechargeTime: 8 },
+    2: { maxCap: 65, activeDuration: 6, rechargeTime: 7 },
+    3: { maxCap: 95, activeDuration: 7, rechargeTime: 6 },
+    4: { maxCap: 130, activeDuration: 8, rechargeTime: 5 },
+    5: { maxCap: 175, activeDuration: 10, rechargeTime: 4 },
+  }[tier];
+}
+
+function getCryoFreezeAmount(lvl) {
+  return [0, 1.0, 1.5, 2.0, 2.5, 3.0][Math.min(Math.max(lvl, 1), 5)] || 1.0;
+}
+
+function getCryoDamage(lvl, dmgMult) {
+  return dmgMult * (4 + lvl * 1.5);
+}
+
 export const WDEFS = {
   cryo: {
     id: 'cryo', name: 'CRYO', icon: '❄', col: '#00CFFF',
@@ -37,13 +95,42 @@ export const WDEFS = {
     getRate: p => {
       const lvl = getWeaponLevel(p, 'cryo');
       const base = 1.9 + lvl * 0.35;
-      return base * (p.rateBonus || 1);
+      const ascension = getAscension(p, 'cryo');
+      const rate = base * (p.rateBonus || 1);
+      return ascension === 'glacial_lance' ? rate / 3 : rate;
     },
     fire(p) {
       const t = nearest(p); if (!t) return;
       const a = Math.atan2(t.y - p.y, t.x - p.x);
       const lvl = getWeaponLevel(p, 'cryo');
-      const dmg = p.dmg * (8 + lvl * 3);
+      const ascension = getAscension(p, 'cryo');
+      if (ascension === 'frost_field') return;
+      const dmg = getCryoDamage(lvl, p.dmg);
+      if (ascension === 'glacial_lance') {
+        mkBullet(
+          p.x,
+          p.y,
+          Math.cos(a) * 620,
+          Math.sin(a) * 620,
+          10,
+          dmg * 0.75,
+          '#7BE9FF',
+          3.4,
+          {
+            type: 'cryo',
+            tier: lvl,
+            cryoLevel: lvl,
+            pierce: 999,
+            isLance: true,
+            lanceLength: 220,
+            freezeAmount: 0.9,
+            multiHit: true,
+            hitInterval: 0.12,
+            angle: a,
+          }
+        );
+        return;
+      }
       const count = getCryoProjectileCount(lvl);
       const spreadStep = getCryoSpreadStep(lvl);
       const startOffset = -spreadStep * (count - 1) * 0.5;
@@ -59,9 +146,18 @@ export const WDEFS = {
           dmg,
           '#00CFFF',
           2.2,
-          { type: 'cryo', tier: lvl, pierce: 1 }
+          { type: 'cryo', tier: lvl, cryoLevel: lvl, pierce: 1 }
         );
       }
+    },
+    tick(p, dt, _onHitEnemy, helpers = {}) {
+      tickCryoAscension(
+        p,
+        helpers.enemies || enemies,
+        dt,
+        helpers.addParticle,
+        helpers.applyFreezeMeter || applyFreezeMeter
+      );
     }
   },
   pulse: {
@@ -115,16 +211,17 @@ export const WDEFS = {
       const boss = getExtraTarget();
       if (boss?.alive && dist2(p, boss) < r * r) {
         onHitEnemy(boss, dmg, '#BF77FF');
-        boss.stunT = stunDur * 0.5;
-        boss.stunned = true;
-        boss.empMarkT = Math.max(boss.empMarkT || 0, stunDur * 0.5);
+        if (!boss.stunImmune) {
+          boss.stunT = stunDur * 0.5;
+          boss.stunned = true;
+          boss.empMarkT = Math.max(boss.empMarkT || 0, stunDur * 0.5);
+        }
         affected.push(boss);
       }
 
       if (lvl >= 5) {
         affected.forEach(target => triggerEmpShockwave(target, p.dmg * 6, onHitEnemy, boss));
       }
-
       pruneEnemies();
     }
   },
@@ -226,11 +323,63 @@ export const WDEFS = {
 
       p._miniDr = [];
     }
+  },
+  barrier: {
+    id: 'barrier', name: 'BARRIER', icon: '◎', col: '#C6FF00',
+    maxLvl: 5,
+    baseRate: 0,
+    getRate: () => 0,
+    fire: () => {},
+    tiers: {
+      1: getBarrierTier(1),
+      2: getBarrierTier(2),
+      3: getBarrierTier(3),
+      4: getBarrierTier(4),
+      5: getBarrierTier(5),
+    },
+    tick(p, dt, _onHitEnemy, helpers = {}) {
+      const lvl = getWeaponLevel(p, 'barrier');
+      if (!lvl) return;
+      const tier = getBarrierTier(lvl);
+
+      p._shieldMaxCap = tier.maxCap;
+      p._shieldFlashT = Math.max(0, p._shieldFlashT || 0);
+      p._shieldHitT = Math.max(0, p._shieldHitT || 0);
+
+      if (typeof p._shieldActive !== 'boolean') p._shieldActive = true;
+      if (typeof p._shieldCap !== 'number') p._shieldCap = tier.maxCap;
+      if (typeof p._shieldRechargeT !== 'number') p._shieldRechargeT = 0;
+      if (typeof p._shieldActiveT !== 'number') p._shieldActiveT = tier.activeDuration;
+      if (typeof p._shieldAbsorbedCycle !== 'number') p._shieldAbsorbedCycle = 0;
+
+      if (p._shieldFlashT > 0) p._shieldFlashT = Math.max(0, p._shieldFlashT - dt);
+      if (p._shieldHitT > 0) p._shieldHitT = Math.max(0, p._shieldHitT - dt);
+
+      if (p._shieldActive) {
+        p._shieldCap = Math.min(p._shieldCap, p._shieldMaxCap);
+        p._shieldActiveT -= dt;
+        if (p._shieldActiveT <= 0 || p._shieldCap <= 0) {
+          helpers.onShieldBreak?.(p, tier);
+        }
+        return;
+      }
+
+      p._shieldRechargeT -= dt;
+      if (p._shieldRechargeT <= 0) {
+        p._shieldActive = true;
+        p._shieldCap = p._shieldMaxCap;
+        p._shieldActiveT = tier.activeDuration;
+        p._shieldRechargeT = 0;
+        p._shieldAbsorbedCycle = 0;
+        helpers.onShieldRestore?.(p, tier);
+      }
+    }
   }
 };
 
-export function triggerOverload(e, dmg, onHitEnemy) {
+export function triggerOverload(e, dmg, onHitEnemy, onTrigger) {
   const x = e.x, y = e.y, r = 100;
+  onTrigger?.();
   addRing(x, y, r, '#ffffff', 3, 0.5);
   addRing(x, y, r * 1.4, '#BF77FF', 2, 0.6);
   addBurst(x, y, '#ffffff', 9, 110, 4, 0.55);
@@ -242,7 +391,50 @@ export function triggerOverload(e, dmg, onHitEnemy) {
 }
 
 export function handleCryoImpact(game, bullet, target) {
-  if (!target.frozen) applySlow(target, 2.0, 0.5);
+  if (bullet.meta?.isCryoShard) {
+    addBurst(target.x, target.y, '#A6F7FF', 5, 36, 1.8, 0.16);
+    addRing(target.x, target.y, 16, '#7BE9FF', 1.2, 0.12);
+  } else if (!target.frozen) {
+    applySlow(target, 2.0, 0.5);
+  }
+  const cryoLevel = bullet.meta?.cryoLevel || 1;
+  target._freezeSourceLevel = cryoLevel;
+  applyFreezeMeter(target, bullet.meta?.freezeAmount || getCryoFreezeAmount(cryoLevel));
+}
+
+export function tickCryoAscension(P, enemyList, dt, addParticle, applyFreezeMeterFn) {
+  const ascension = getAscension(P, 'cryo');
+  if (ascension !== 'frost_field') return;
+
+  P._frostFieldT = (P._frostFieldT || 0) + dt;
+  if (P._frostFieldT < 0.4) return;
+
+  P._frostFieldT = 0;
+  enemyList.forEach(e => {
+    if (!e || e.hp <= 0) return;
+    const dx = e.x - P.x;
+    const dy = e.y - P.y;
+    if (dx * dx + dy * dy > 150 * 150) return;
+    applyFreezeMeterFn(e, 1.5);
+    e.slowT = 0.6;
+    e.spdMult = 0.4;
+  });
+  addParticle?.(P.x, P.y, 150, 'rgba(0, 207, 255, 0.22)', 1.5, 0.18);
+}
+
+export function applyFreezeMeter(e, amount) {
+  ensureFreezeState(e);
+  if (e.frozen) return;
+  if (e.freezeCooldown > 0) return;
+  if (e.freezeImmune) return;
+  if (e.isBoss && e.bossFreezeCooldown > 0) return;
+
+  e.freezeMeter = Math.min(e.freezeThreshold, e.freezeMeter + amount);
+
+  if (e.isBoss && e.freezeMeter > e.freezeThreshold * 0.3) {
+    e.freezeMeter = 0;
+    e.bossFreezeCooldown = 8;
+  }
 }
 
 export function updateCryoFields(game, dt) {

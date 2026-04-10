@@ -20,8 +20,6 @@ export function mkWeaponState(lvl = 0) {
   return {
     owned: lvl > 0,
     lvl,
-    stats: {},
-    paths: { t1: null, t2: null, t3: null },
     runtime: {},
   };
 }
@@ -36,6 +34,14 @@ export function getWeaponLevel(p, wid) {
 
 export function hasWeapon(p, wid) {
   return getWeaponLevel(p, wid) > 0;
+}
+
+export function hasAscension(p, weaponId, ascensionId) {
+  return p.ascensions?.[weaponId] === ascensionId;
+}
+
+export function getAscension(p, weaponId) {
+  return p.ascensions?.[weaponId] || null;
 }
 
 export function getOwnedWeaponIds(p) {
@@ -58,42 +64,13 @@ export function upgradeWeaponLevel(p, wid, nextLvl = null) {
   return state;
 }
 
-export function getWeaponStatLevel(p, wid, statId) {
-  return getWeaponState(p, wid)?.stats?.[statId] || 0;
-}
-
-export function addWeaponStatLevel(p, wid, statId, delta = 1) {
-  const state = addWeapon(p, wid, 1);
-  state.stats[statId] = (state.stats[statId] || 0) + delta;
-  return state.stats[statId];
-}
-
-export function getWeaponPath(p, wid, tier) {
-  return getWeaponState(p, wid)?.paths?.[tier] || null;
-}
-
-export function setWeaponPath(p, wid, tier, pathId) {
-  const state = addWeapon(p, wid, 1);
-  state.paths[tier] = pathId;
-  return state.paths[tier];
-}
-
-export function getWeaponStatTotal(p, wid) {
-  return Object.values(getWeaponState(p, wid)?.stats || {})
-    .reduce((sum, v) => sum + v, 0);
-}
-
-export function getWeaponPathCount(p, wid) {
-  return Object.values(getWeaponState(p, wid)?.paths || {})
-    .filter(Boolean).length;
-}
-
 export function mkPlayer(W, H, char = CHARACTERS.ghost) {
   const ws = {
     cryo: mkWeaponState(),
     pulse: mkWeaponState(),
     emp: mkWeaponState(),
     swarm: mkWeaponState(),
+    barrier: mkWeaponState(),
   };
   ws[char.startWeapon] = mkWeaponState(1);
   return {
@@ -104,6 +81,7 @@ export function mkPlayer(W, H, char = CHARACTERS.ghost) {
     mag: 85, dodge: char.dodge,
     rateBonus: 1,
     ws,
+    ascensions: {},
     ft: {}, _dr: null, _miniDr: [],
     level: 1, xp: 0, xpNext: 14,
     invT: 0,

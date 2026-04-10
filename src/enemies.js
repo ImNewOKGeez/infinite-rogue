@@ -1,3 +1,7 @@
+import { addBurst } from './particles.js';
+import { applyFreezeMeter } from './weapons.js';
+import { hasAscension } from './player.js';
+
 export const enemies = [];
 let enemyIdCounter = 1;
 
@@ -10,13 +14,14 @@ function mkStatusState() {
   return {
     slowT: 0,
     spdMult: 1,
-    frozenT: 0,
     stunT: 0,
     stunned: false,
     frozen: false,
     freezeMeter: 0,
-    freezeMeterMax: 100,
-    freezeDecayRate: 12,
+    freezeThreshold: 1,
+    freezeCooldown: 0,
+    frozenTimer: 0,
+    frostLevel: 0,
     cryoPulseCd: 0,
     overloadMarkT: 0,
     empMarkT: 0,
@@ -48,7 +53,17 @@ export function spawnEnemy(gt, W, H) {
       shooter: { r: 12, hp: 28 + wave * 13, spd: 58 + wave * 4, dmg: 0, xp: 5, col: '#FFB627', shape: 'circ', shootT: 1 },
       brute: { r: 21, hp: 120 + wave * 40, spd: 40 + wave * 3, dmg: 24, xp: 12, col: '#D4537E', shape: 'sq' },
     }[type];
-    enemies.push({ id: enemyIdCounter++, ...base, type, x: x + ox, y, maxHp: base.hp, ...mkStatusState() });
+    const maxHp = base.hp;
+    enemies.push({
+      id: enemyIdCounter++,
+      ...base,
+      type,
+      x: x + ox,
+      y,
+      maxHp,
+      ...mkStatusState(),
+      freezeThreshold: Math.ceil(maxHp / 40),
+    });
   }
 }
 
@@ -58,10 +73,14 @@ export function pruneEnemies() {
   }
 }
 
-export function ensureFreezeState(target, max = 100) {
+export function ensureFreezeState(target) {
   if (target.freezeMeter == null) target.freezeMeter = 0;
-  if (target.freezeMeterMax == null) target.freezeMeterMax = max;
-  if (target.freezeDecayRate == null) target.freezeDecayRate = 12;
+  if (target.freezeThreshold == null) target.freezeThreshold = Math.max(1, Math.ceil((target.maxHp || 40) / 40));
+  if (target.freezeCooldown == null) target.freezeCooldown = 0;
+  if (target.frozenTimer == null) target.frozenTimer = 0;
+  if (target.frozen == null) target.frozen = false;
+  if (target.frostLevel == null) target.frostLevel = 0;
+  if (target.isBoss && target.bossFreezeCooldown == null) target.bossFreezeCooldown = 0;
   return target;
 }
 
@@ -70,16 +89,17 @@ export function applySlow(target, duration, spdMult = 0.45) {
   target.spdMult = Math.min(target.spdMult || 1, spdMult);
 }
 
-export function applyFreezeBuildup(target, buildup, freezeDuration, freezeMeterMax = 100) {
-  ensureFreezeState(target, freezeMeterMax);
+export function applyFreezeBuildup(target, buildup, freezeDuration) {
+  ensureFreezeState(target);
   if (target.frozen) {
-    target.frozenT = Math.max(target.frozenT || 0, freezeDuration * 0.25);
+    target.frozenTimer = Math.max(target.frozenTimer || 0, freezeDuration * 0.25);
     return { froze: false, meter: target.freezeMeter };
   }
-  target.freezeMeter = Math.min(target.freezeMeterMax, target.freezeMeter + buildup);
-  if (target.freezeMeter >= target.freezeMeterMax) {
+  if (target.freezeCooldown > 0 || target.freezeImmune) return { froze: false, meter: target.freezeMeter };
+  target.freezeMeter = Math.min(target.freezeThreshold, target.freezeMeter + buildup);
+  if (target.freezeMeter >= target.freezeThreshold) {
     target.frozen = true;
-    target.frozenT = Math.max(target.frozenT || 0, freezeDuration);
+    target.frozenTimer = Math.max(target.frozenTimer || 0, freezeDuration);
     target.slowT = 0;
     target.freezeMeter = 0;
     return { froze: true, meter: 0 };
@@ -87,16 +107,80 @@ export function applyFreezeBuildup(target, buildup, freezeDuration, freezeMeterM
   return { froze: false, meter: target.freezeMeter };
 }
 
+function getFrostLevel(e) {
+  const threshold = Math.max(1, e.freezeThreshold || 1);
+  const fillPct = (e.freezeMeter / threshold) * 100;
+  if (fillPct >= 75) return 3;
+  if (fillPct >= 50) return 2;
+  if (fillPct >= 25) return 1;
+  return 0;
+}
+
+function maybeSpreadFreeze(frozenEnemy) {
+  if ((frozenEnemy._freezeSourceLevel || 0) < 2) return;
+
+  let targetEnemy = null;
+  let bestDist = 120 * 120;
+  enemies.forEach(e => {
+    if (e === frozenEnemy || e.hp <= 0 || e.frozen || e.freezeCooldown > 0) return;
+    const d = dist2(frozenEnemy, e);
+    if (d < bestDist) {
+      bestDist = d;
+      targetEnemy = e;
+    }
+  });
+
+  if (!targetEnemy) return;
+  const spreadAmount = (frozenEnemy.maxHp / targetEnemy.maxHp) * (targetEnemy.freezeThreshold * 0.75);
+  targetEnemy._freezeSourceLevel = frozenEnemy._freezeSourceLevel || 0;
+  applyFreezeMeter(targetEnemy, spreadAmount);
+}
+
+export function updateEnemyFreezeState(e, dt, P = null) {
+  ensureFreezeState(e);
+
+  if (e.freezeCooldown > 0) e.freezeCooldown = Math.max(0, e.freezeCooldown - dt);
+  if (e.isBoss && e.bossFreezeCooldown > 0) e.bossFreezeCooldown = Math.max(0, e.bossFreezeCooldown - dt);
+
+  if (e.frozen) {
+    e.frozenTimer = Math.max(0, (e.frozenTimer || 0) - dt);
+    if (e.frozenTimer <= 0) {
+      e.frozen = false;
+      e.frozenTimer = 0;
+      e.permafrost = false;
+      e.freezeMeter = 0;
+      e.freezeCooldown = 4;
+      e.frostLevel = 0;
+      addBurst(e.x, e.y, '#00CFFF', 8, 75, 2.8, 0.45);
+      return;
+    }
+    e.frostLevel = 3;
+    return;
+  }
+
+  if (e.freezeMeter >= e.freezeThreshold && e.freezeCooldown <= 0) {
+    e.frozen = true;
+    e.permafrost = hasAscension(P, 'cryo', 'permafrost');
+    e.frozenTimer = e.permafrost ? 99999 : 1.5;
+    e.freezeMeter = 0;
+    e.slowT = 0;
+    e.frostLevel = 3;
+    maybeSpreadFreeze(e);
+    e._freezeSourceLevel = 0;
+    return;
+  }
+
+  if (e.freezeCooldown <= 0) {
+    e.freezeMeter = Math.max(0, e.freezeMeter - 0.5 * dt);
+  }
+
+  e.frostLevel = getFrostLevel(e);
+}
+
 export function tickEnemyStatus(e, dt) {
   if (e.stunned) {
     e.stunT -= dt;
     if (e.stunT <= 0) e.stunned = false;
-  }
-  if (e.frozen) {
-    e.frozenT -= dt;
-    if (e.frozenT <= 0) e.frozen = false;
-  } else if (e.freezeMeter > 0) {
-    e.freezeMeter = Math.max(0, e.freezeMeter - (e.freezeDecayRate || 12) * dt);
   }
   if (e.slowT > 0) {
     e.slowT -= dt;

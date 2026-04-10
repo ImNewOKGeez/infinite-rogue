@@ -43,11 +43,12 @@ export function initJoystick(jZone, joystick, knob) {
     e.preventDefault();
   }, { passive: false });
 
-  function jStop() {
+  function jStop(e) {
+    e?.preventDefault();
     jOn = false; jDir.x = 0; jDir.y = 0;
     joystick.style.display = 'none';
     knob.style.left = '50%'; knob.style.top = '50%';
   }
-  jZone.addEventListener('touchend', jStop);
-  jZone.addEventListener('touchcancel', jStop);
+  jZone.addEventListener('touchend', jStop, { passive: false });
+  jZone.addEventListener('touchcancel', jStop, { passive: false });
 }

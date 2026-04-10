@@ -1,0 +1,6 @@
+{
+  "appId": "com.infiniterogue.app",
+  "appName": "Infinite Rogue",
+  "webDir": "dist",
+  "bundledWebRuntime": false
+}

@@ -1,4 +1,5 @@
 import { addWeapon, getOwnedWeaponIds, getWeaponLevel, upgradeWeaponLevel } from './player.js';
+import { ASCENSIONS, bullets } from './weapons.js';
 
 export const PASSIVES = [
   { id: 'spd', label: 'SPRINT', apply: p => { const w = p.spd; p.spd = Math.round(p.spd * 1.22); return [`Speed: ${w} -> ${p.spd}`]; } },
@@ -11,10 +12,10 @@ export const PASSIVES = [
 
 export function buildPool(p) {
   const weps = [];
-  ['cryo', 'pulse', 'emp', 'swarm'].forEach(wid => {
+  ['cryo', 'pulse', 'emp', 'swarm', 'barrier'].forEach(wid => {
     const lvl = getWeaponLevel(p, wid);
     const slots = getOwnedWeaponIds(p).length;
-    const maxLvl = { cryo: 5, pulse: 5, emp: 5, swarm: 5 }[wid] || 3;
+    const maxLvl = 5;
     if (lvl > 0 && lvl < maxLvl) weps.push({ id: 'wu_' + wid, type: 'wep', wid, lvl: lvl + 1 });
     else if (lvl === 0 && slots < 4) weps.push({ id: 'wn_' + wid, type: 'wep', wid, lvl: 1, isNew: true });
   });
@@ -56,6 +57,47 @@ export function applyUpgrade(id, p) {
     const pid = id.slice(2);
     const u = PASSIVES.find(x => x.id === pid);
     if (u) u.apply(p);
+  }
+}
+
+export function buildAscensionPool(p) {
+  const eligibleWeapons = getOwnedWeaponIds(p)
+    .filter(wid => getWeaponLevel(p, wid) >= 5 && !p.ascensions?.[wid] && ASCENSIONS[wid]?.length);
+
+  if (!eligibleWeapons.length) return null;
+
+  let bestLevel = -Infinity;
+  let tied = [];
+  eligibleWeapons.forEach(wid => {
+    const lvl = getWeaponLevel(p, wid);
+    if (lvl > bestLevel) {
+      bestLevel = lvl;
+      tied = [wid];
+    } else if (lvl === bestLevel) {
+      tied.push(wid);
+    }
+  });
+
+  const weaponId = tied[Math.floor(Math.random() * tied.length)];
+  const pool = [...ASCENSIONS[weaponId]];
+  const options = [];
+  while (pool.length && options.length < Math.min(3, ASCENSIONS[weaponId].length)) {
+    options.push(pickRandom(pool));
+  }
+
+  return { weaponId, options };
+}
+
+export function applyAscension(p, weaponId, ascensionId) {
+  if (!p.ascensions) p.ascensions = {};
+  p.ascensions[weaponId] = ascensionId;
+
+  if (weaponId === 'cryo') {
+    p.ft.cryo = 0;
+    p._frostFieldT = 0;
+    for (let i = bullets.length - 1; i >= 0; i--) {
+      if (bullets[i].meta?.type === 'cryo') bullets.splice(i, 1);
+    }
   }
 }
 
