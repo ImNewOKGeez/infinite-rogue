@@ -145,7 +145,7 @@ Broad by intent. The game should be readable for casual players and strategicall
 - Heal orbs that restore 5% max HP and are globally throttled.
 - Surge events every 40 seconds outside boss flow.
 - Recurring three-phase boss with warning, intro, boss bar, phase announcements, and post-kill reward draft.
-- Boss-gated weapon Ascension draft for level-5 weapons, with Cryo and Pulse transformation pools currently live.
+- Boss-gated weapon Ascension draft for level-5 weapons, with Cryo, Pulse, EMP, and Swarm transformation pools currently live.
 - Death screen with run stats, equipped weapons, and run synergies.
 - Save-backed records screen with global and per-character bests.
 - Persistent synergy discovery tracking with first-discovery pause overlay.
@@ -215,8 +215,8 @@ The live weapon system is simple and numeric right now:
 |---|---|---|---|
 | Cryo | `#00CFFF` | Fast lane pressure / control setup | Fires 1 to 5 piercing lances as level rises; slows on hit and builds freeze meter |
 | Pulse | `#FFB627` | Burst / explosive chain coverage | Heavy shell with impact explosion and recursive cluster-bomb scaling from level 2 onward |
-| EMP | `#BF77FF` | Radial control / overload payoff | Expanding stun burst with larger radius and longer stun each level; overload payoff active at level 3+ |
-| Swarm | `#1DFFD0` | Persistent seek damage | Orbiting drones that seek targets; levels mainly add more drones |
+| EMP | `#BF77FF` | Radial control / Ascension-led payoff | Expanding stun burst with larger radius and slightly longer stun each level; special payoff behavior now lives in Ascensions like Cascade Pulse, Triple Pulse, and Arc Discharge |
+| Swarm | `#1DFFD0` | Persistent seek damage | Orbiting drones that seek targets; levels mainly add more drones, with Ascensions for kill novas, frenzy chains, and split seekers |
 | Barrier | `#C6FF00` | Defensive sustain | Cycling absorb shield with recharge and heal refund based on absorbed damage |
 
 ### Live per-weapon detail
@@ -242,11 +242,19 @@ The live weapon system is simple and numeric right now:
 - Proximity Mine tuning note: mines currently deal 3x base Pulse damage in a 120px blast and leave behind a 2-second amber slow field.
 
 #### EMP
-- Level 1: 160px burst, 18 damage scaling base, 2.5s stun.
-- Level 2: 220px burst, 3.0s stun.
-- Level 3: 280px burst, 3.5s stun and marked-kill overload explosions become relevant in `game.js`.
-- Level 4: 340px burst, 4.0s stun.
-- Level 5: 400px burst, 4.5s stun, plus small shockwaves from affected targets.
+- Level 1: radius 160px, stun 1.2s, damage x1.0 on the reduced EMP base damage.
+- Level 2: radius 200px, stun 1.4s, damage x1.3 on the reduced EMP base damage.
+- Level 3: radius 245px, stun 1.6s, damage x1.7 on the reduced EMP base damage.
+- Level 4: radius 295px, stun 1.8s, damage x2.2 on the reduced EMP base damage.
+- Level 5: radius 350px, stun 2.0s, damage x2.8 on the reduced EMP base damage.
+- EMP burst damage has been reduced to roughly 45% of the earlier values so its identity stays control-first rather than lethal burst-first.
+- EMP burst damage is now a flat tuned base-damage value again across base and Ascension variants, so it can still finish enemies instead of being held above a max-HP floor.
+- Base EMP no longer gets level-gated overload explosions, marked kills, or shockwaves; those kinds of special effects now belong to Ascensions only.
+- `ASCENSIONS.emp` currently defines `cascade_pulse`, `triple_pulse`, and `arc_discharge`.
+- Current implementation note: EMP Ascension runtime state uses `game.tripleWaves`, `game.updateTripleWaves`, `game.pendingCascades`, `game.updatePendingCascades`, `game.fireCascadeBurst`, `game.applyCascadePulse`, and `game.applyArcDischarge`.
+- Cascade Pulse now queues a 0.4-second charge on every enemy damaged by the main EMP burst, then releases a 100px secondary burst at that enemy's current position that damages nearby enemies and stuns them for 1.0s, with no further chaining beyond that one layer.
+- Triple Pulse now renders as three independently expanding rings with distinct speeds and per-stage audio cues, and each ring is pure knockback only with no stun, using stronger push on the farther rings to create space.
+- Arc Discharge now makes each stunned enemy fire up to 3 arcs toward the nearest non-stunned enemies within 250px, falling back to nearby already-stunned non-source enemies if no fresh targets are available, dealing 12% of each target's max HP per arc and applying a brief mini-stun, capped at 20 total arcs per burst.
 
 #### Swarm
 - Level 1: 2 drones.
@@ -255,6 +263,9 @@ The live weapon system is simple and numeric right now:
 - Level 4: 5 drones.
 - Level 5: 6 drones.
 - Drones orbit, acquire nearby targets, seek, hit, and return.
+- `ASCENSIONS.swarm` currently defines `nova_swarm`, `frenzy`, and `split_swarm`.
+- Split Swarm split drones now live for 3 seconds and try to claim different targets before falling back to already-claimed enemies.
+- Current implementation note: Swarm Ascension runtime state uses `player._novaDrones`, `player._splitDrones`, main-drone `hasSplitThisContact`, `game.handleNovaDroneKill`, `game.spawnSplitDrone`, `game.updateSplitDrones`, and `game.drawSplitDrones`.
 
 #### Barrier
 - Level 1: absorb 40, active 5s, recharge 8s.
@@ -406,8 +417,8 @@ ios/           - generated Capacitor iOS project when created on a Mac; absent o
 src/
   main.js        - app entry, loads save and starts Game
   progression.js - save schema, records, synergy persistence
-  game.js        - core loop, menus, overlays, run flow, combat orchestration, world camera state, background/boundary rendering via `initBackground`, `updateBackground`, `drawBackground`, and `drawBoundaryWarning`, plus Pulse runtime helpers like `updateMines`, `drawMines`, `triggerMineExplosion`, `updateSlowFields`, `drawSlowFields`, and delayed Pulse explosions
-  player.js      - character roster, player factory, weapon-state helpers, and per-run Pulse Ascension tracking fields
+  game.js        - core loop, menus, overlays, run flow, combat orchestration, world camera state, background/boundary rendering via `initBackground`, `updateBackground`, `drawBackground`, and `drawBoundaryWarning`, plus Pulse runtime helpers like `updateMines`, `drawMines`, `triggerMineExplosion`, `updateSlowFields`, `drawSlowFields`, and delayed Pulse explosions, EMP helpers `updateTripleWaves`, `drawTripleWaves`, `applyCascadePulse`, and `applyArcDischarge`, and Swarm helpers `handleNovaDroneKill`, `spawnSplitDrone`, `updateSplitDrones`, and `drawSplitDrones`
+  player.js      - character roster, player factory, weapon-state helpers, and per-run Pulse/Swarm Ascension tracking fields like `_pulseMines`, `_pulseOverloadCounter`, `_novaDrones`, and `_splitDrones`
   weapons.js     - weapon defs, bullets, ascension defs, cryo ascension hooks, pulse clusters, shield logic hooks
   enemies.js     - enemy roster, spawn logic, targeting and status helpers, freeze-state updates, and freeze spread
   upgrades.js    - passive defs, upgrade pool generation, `buildAscensionPool`, `applyUpgrade`, and `applyAscension`
@@ -415,13 +426,14 @@ src/
   particles.js   - particles and combat feedback primitives
   hud.js         - HUD DOM creation and overlay helpers
   input.js       - keyboard and virtual joystick
-  audio.js       - procedural SFX and boss music helpers
+  audio.js       - procedural SFX and boss music helpers, including `playNovaDetonationSound` and `playFrenzySound`
   style.css      - all HUD/menu/overlay styling
 ```
 
 ### Important implementation mismatches to remember
 - Ghost's passive is currently represented directly on character data, while Bruiser and Hacker passives are still hardcoded in `game.js`.
 - The playtest lab is fully implemented in the menu/runtime flow, but it is still a developer-facing tool rather than a settled player-facing feature.
+- Some Ascension descriptions in `weapons.js` are now slightly behind the true runtime numbers and cadence. At the moment, `CLAUDE.md` should be treated as the clearer reference for the latest live Pulse/EMP/Swarm tuning.
 
 ## Technical conventions
 - Vanilla JS only.
@@ -429,6 +441,7 @@ src/
 - Vite for dev/build.
 - Mobile update workflow is `npm run build` -> `npx cap sync` -> open the Android project in Android Studio.
 - Game state primarily lives on the `Game` instance.
+- EMP Triple Pulse runtime state currently drives a single expanding shockwave via `game.tripleWaves`.
 - `WORLD_W` and `WORLD_H` currently define a shared fixed arena size of `3000`.
 - Arrays for active entities are acceptable; prune/filter dead entries.
 - Prefer readable formulas over over-engineered abstractions.
@@ -481,6 +494,21 @@ src/
 6. Refactor character passives from hardcoded `game.js` checks into a hook surface on the character definition object in `player.js`. This is required before the roster expands beyond three characters.
 
 ## Changelog
+- 2026-04-10: Re-reviewed this brief against the latest live weapon/Ascension worktree, corrected the EMP roster summary so it no longer claims removed base-overload behavior, and clarified that `CLAUDE.md` is currently more accurate than a few stale inline Ascension descriptions in `weapons.js`.
+- 2026-04-10: Cut Swarm's Pulse Orbit Ascension and removed its runtime, state, audio, and particle cleanup paths.
+- 2026-04-10: Retuned Swarm again by making temporary Nova drones larger, brighter, pulsing, and easier to read, replacing Pulse Orbit's old phase-and-spoke model with a 5-second charge into rapid sequential outward drone streaks, and upgrading Split Swarm so split drones render as full mini-drones, prefer different targets, and expire after 3 seconds.
+- 2026-04-10: Reworked all four Swarm Ascensions by making Nova drones clearer and faster with expiry feedback plus a dedicated detonation sound, adding one-shot Frenzy activation audio, fully rewriting Pulse Orbit around phase-based inward windup plus world-space spoke rendering and burst audio, and moving Split Swarm to dedicated spawn/update/draw helpers with per-contact split flags and cleaner resets.
+- 2026-04-10: Added the full Swarm Ascension pool with Nova Swarm, Frenzy, Pulse Orbit, and Split Swarm, including temporary nova drones, frenzy drone chaining, pulse-orbit burst spokes and wind-up visuals, split-drone seekers, and clean Swarm state resets on new runs.
+- 2026-04-10: Reworked Cascade Pulse into delayed detonations that follow burst-hit enemies for 0.4 seconds before releasing a damaging 100px stun burst, and refocused Triple Pulse into pure pushback by removing its stun, softening its knockback values, extending the decay, and giving runners extra scatter while brutes still barely move.
+- 2026-04-10: Simplified Cascade Pulse into a single universal 100px ripple emitted by every enemy hit by the main EMP burst, removed the old cascade-level tracking in favour of a temporary `_cascaded` flag, and added distance-scaled Triple Pulse knockback with heavier outer-ring push plus reduced brute displacement.
+- 2026-04-10: Removed the EMP Ascension no-kill max-HP floor, retuned base EMP damage slightly lower so it can still kill without returning to old one-shot behavior, and made Cascade Pulse more rewarding by adding stronger emitter and target-hit feedback on affected enemies.
+- 2026-04-10: Improved EMP follow-through again by making Cascade Pulse render its glow rings from the actual pulse emitters instead of the newly stunned targets, and letting Arc Discharge fall back to nearby already-stunned enemies so arcs can finish weakened EMP victims when no fresh targets are in range.
+- 2026-04-10: Restored the base EMP fire sound for base EMP, Cascade Pulse, and Arc Discharge while keeping Triple Pulse on its staged-only audio, upgraded Cascade Pulse ring readability with brighter world-space glow settings, and expanded Arc Discharge so each stunned enemy can link to up to three nearby non-stunned targets with a 20-arc cap.
+- 2026-04-10: Removed the base EMP fire sound so only Ascension-specific EMP sounds remain, upgraded Cascade Pulse into a two-level ripple, and redesigned Arc Discharge so stunned enemies zap the nearest non-stunned target instead of chaining only between stunned enemies.
+- 2026-04-10: Fixed the EMP Ascension readability pass by correcting Cascade Pulse secondary-target handling so ripples actually fire after the main stun, giving Triple Pulse three independently paced rings with stage-specific audio, and changing Arc Discharge to deal 12% max-HP damage per connection with its own electrical sound.
+- 2026-04-10: Simplified base EMP into a pure scaling radial burst by removing the old level-gated overload and shockwave behavior, switching its level progression to a clean radius/stun/damage-mult table, and leaving special behavior to the EMP Ascension layer only.
+- 2026-04-10: Retuned EMP by cutting burst damage to roughly 45% of its prior values, replacing Triple Pulse's delayed-burst queue with a single expanding `tripleWaves` shockwave, widening Cascade Pulse's secondary ring readability, and giving Arc Discharge a much brighter two-pass glow render.
+- 2026-04-10: Added the full EMP Ascension pool with Cascade Pulse, Triple Pulse, and Arc Discharge, including queued delayed EMP bursts, post-stun cascade logic, stunned-target arc visuals/damage, and particle-system arc rendering.
 - 2026-04-10: Tuned Pulse Ascensions again by moving Overload Round to a 3-shot cadence with stronger screen-space feedback, making Chain Reaction cluster detonations and proc impacts visibly bigger, and upgrading Proximity Mine to a 120px 3x-damage blast that leaves a fading amber slow field.
 - 2026-04-10: Added the full Pulse Ascension pool with Chain Reaction, Collapsed Round, Overload Round, Proximity Mine, and Fragmentation, including mine runtime state, overload HUD tracking, delayed collapsed explosions, and chain-proc cluster handling.
 - 2026-04-10: Re-reviewed this brief against the live repo after the world-space/mobile pass, confirmed the current body still matches the implemented arena/camera/playtest/mobile state, and clarified the older 2026-04-09 weapon-state history so the changelog reads as an ordered progression instead of a contradiction.

@@ -140,28 +140,160 @@ export function playPulseFire() {
   osc('sine', 160, 0.18, 0.003, 0.08, 85);
 }
 
-export function playEmpFire() {
+export function playEMPSound() {
+  noiseShot(0.2, 0.002, 0.08, 'bandpass', 1600, 3.5);
+  osc('triangle', 320, 0.18, 0.003, 0.12, 120);
+  osc('sine', 760, 0.07, 0.002, 0.08, 240);
+}
+
+export function playCascadeSound() {
   const ctx = getAudioCtx();
-  // electric sawtooth sweep
-  const o = ctx.createOscillator();
-  const f = ctx.createBiquadFilter();
-  const g = ctx.createGain();
   const t = n();
-  o.type = 'sawtooth';
-  o.frequency.setValueAtTime(200, t);
-  o.frequency.linearRampToValueAtTime(55, t + 0.38);
-  f.type = 'bandpass';
-  f.frequency.value = 700;
-  f.Q.value = 2.5;
-  g.gain.setValueAtTime(0.22, t);
-  g.gain.exponentialRampToValueAtTime(0.001, t + 0.42);
-  o.connect(f);
-  f.connect(g);
+  const src = ctx.createBufferSource();
+  src.buffer = getNoiseBuf();
+  const filter = ctx.createBiquadFilter();
+  const gain = ctx.createGain();
+  filter.type = 'bandpass';
+  filter.frequency.setValueAtTime(400, t);
+  filter.frequency.exponentialRampToValueAtTime(200, t + 0.2);
+  filter.Q.value = 3.5;
+  gain.gain.setValueAtTime(0.0001, t);
+  gain.gain.linearRampToValueAtTime(0.12, t + 0.01);
+  gain.gain.exponentialRampToValueAtTime(0.001, t + 0.2);
+  src.connect(filter);
+  filter.connect(gain);
+  gain.connect(master);
+  src.start(t);
+  src.stop(t + 0.24);
+}
+
+export function playTriplePulseSound(stage) {
+  const tones = {
+    1: { freq: 600, gain: 0.16, decay: 0.15, end: 420 },
+    2: { freq: 400, gain: 0.12, decay: 0.2, end: 250 },
+    3: { freq: 250, gain: 0.1, decay: 0.3, end: 120 },
+  };
+  const tone = tones[stage] || tones[1];
+  osc('triangle', tone.freq, tone.gain, 0.003, tone.decay, tone.end);
+  noiseShot(stage === 1 ? 0.04 : stage === 2 ? 0.03 : 0.025, 0.002, tone.decay * 0.5, 'bandpass', tone.freq * 2, 2);
+}
+
+export function playArcSound() {
+  const ctx = getAudioCtx();
+  const t = n();
+  const o1 = ctx.createOscillator();
+  const o2 = ctx.createOscillator();
+  const lfo = ctx.createOscillator();
+  const lfoGain = ctx.createGain();
+  const shaper = ctx.createWaveShaper();
+  const filter = ctx.createBiquadFilter();
+  const gain = ctx.createGain();
+  const curve = new Float32Array(256);
+  for (let i = 0; i < curve.length; i++) {
+    const x = (i / (curve.length - 1)) * 2 - 1;
+    curve[i] = Math.tanh(x * 8);
+  }
+  shaper.curve = curve;
+  shaper.oversample = '4x';
+  o1.type = 'sawtooth';
+  o2.type = 'square';
+  o1.frequency.setValueAtTime(800, t);
+  o2.frequency.setValueAtTime(830, t);
+  o1.frequency.exponentialRampToValueAtTime(120, t + 0.15);
+  o2.frequency.exponentialRampToValueAtTime(110, t + 0.15);
+  lfo.type = 'sine';
+  lfo.frequency.value = 40;
+  lfoGain.gain.value = 55;
+  filter.type = 'bandpass';
+  filter.frequency.value = 1600;
+  filter.Q.value = 2;
+  gain.gain.setValueAtTime(0.0001, t);
+  gain.gain.linearRampToValueAtTime(0.16, t + 0.01);
+  gain.gain.exponentialRampToValueAtTime(0.001, t + 0.15);
+  lfo.connect(lfoGain);
+  lfoGain.connect(o1.frequency);
+  lfoGain.connect(o2.frequency);
+  o1.connect(shaper);
+  o2.connect(shaper);
+  shaper.connect(filter);
+  filter.connect(gain);
+  gain.connect(master);
+  o1.start(t);
+  o2.start(t);
+  lfo.start(t);
+  o1.stop(t + 0.18);
+  o2.stop(t + 0.18);
+  lfo.stop(t + 0.18);
+}
+
+export function playNovaDetonationSound() {
+  const ctx = getAudioCtx();
+  const t = n();
+  const src = ctx.createBufferSource();
+  src.buffer = getNoiseBuf();
+
+  const noiseFilter = ctx.createBiquadFilter();
+  noiseFilter.type = 'bandpass';
+  noiseFilter.frequency.setValueAtTime(300, t);
+  noiseFilter.frequency.exponentialRampToValueAtTime(100, t + 0.15);
+  noiseFilter.Q.value = 2.5;
+
+  const tone = ctx.createOscillator();
+  tone.type = 'triangle';
+  tone.frequency.setValueAtTime(300, t);
+  tone.frequency.exponentialRampToValueAtTime(100, t + 0.15);
+
+  const mix = ctx.createGain();
+  const noiseGain = ctx.createGain();
+  const toneGain = ctx.createGain();
+
+  noiseGain.gain.setValueAtTime(0.0001, t);
+  noiseGain.gain.linearRampToValueAtTime(0.28, t + 0.004);
+  noiseGain.gain.exponentialRampToValueAtTime(0.001, t + 0.15);
+
+  toneGain.gain.setValueAtTime(0.0001, t);
+  toneGain.gain.linearRampToValueAtTime(0.18, t + 0.003);
+  toneGain.gain.exponentialRampToValueAtTime(0.001, t + 0.15);
+
+  src.connect(noiseFilter);
+  noiseFilter.connect(noiseGain);
+  noiseGain.connect(mix);
+
+  tone.connect(toneGain);
+  toneGain.connect(mix);
+  mix.connect(master);
+
+  src.start(t);
+  src.stop(t + 0.18);
+  tone.start(t);
+  tone.stop(t + 0.18);
+}
+
+export function playFrenzySound() {
+  const ctx = getAudioCtx();
+  const t = n();
+  const o1 = ctx.createOscillator();
+  const o2 = ctx.createOscillator();
+  const g = ctx.createGain();
+
+  o1.type = 'sawtooth';
+  o2.type = 'square';
+  o1.frequency.setValueAtTime(200, t);
+  o2.frequency.setValueAtTime(220, t);
+  o1.frequency.exponentialRampToValueAtTime(500, t + 0.2);
+  o2.frequency.exponentialRampToValueAtTime(520, t + 0.2);
+
+  g.gain.setValueAtTime(0.0001, t);
+  g.gain.linearRampToValueAtTime(0.16, t + 0.01);
+  g.gain.exponentialRampToValueAtTime(0.001, t + 0.2);
+
+  o1.connect(g);
+  o2.connect(g);
   g.connect(master);
-  o.start(t);
-  o.stop(t + 0.46);
-  // high zap crackle
-  noiseShot(0.13, 0.002, 0.1, 'highpass', 3200);
+  o1.start(t);
+  o2.start(t);
+  o1.stop(t + 0.24);
+  o2.stop(t + 0.24);
 }
 
 export function playHit(isSynergy = false) {

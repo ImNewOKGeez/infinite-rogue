@@ -64,6 +64,40 @@ export const ASCENSIONS = {
       name: 'FRAGMENTATION',
       description: 'Pulse shells split into 8 fragments before impact. Each deals 40% damage and triggers a smaller explosion with one fewer cluster generation.',
     },
+  ],
+  emp: [
+    {
+      id: 'cascade_pulse',
+      name: 'CASCADE PULSE',
+      description: 'Stunning an enemy causes it to emit a secondary pulse that stuns all enemies within 80px. Secondary stuns do not cascade further.',
+    },
+    {
+      id: 'triple_pulse',
+      name: 'TRIPLE PULSE',
+      description: 'EMP releases a single expanding shockwave with three strength thresholds. Inner hits deal full damage and stun, outer hits deal less.',
+    },
+    {
+      id: 'arc_discharge',
+      name: 'ARC DISCHARGE',
+      description: 'Electrical arcs jump between all stunned enemies within 200px of each other. Each arc deals 40% of EMP burst damage.',
+    },
+  ],
+  swarm: [
+    {
+      id: 'nova_swarm',
+      name: 'NOVA SWARM',
+      description: 'Drone kills detonate at the kill point in an 80px explosion. A temporary drone spawns at the detonation and orbits for 8 seconds. Temporary drones can Nova but only explode - no further drone spawning.',
+    },
+    {
+      id: 'frenzy',
+      name: 'FRENZY',
+      description: 'A drone kill triggers a 4-second frenzy on that drone - 3x speed, 2x damage, continuous target seeking with no orbit return between hits. Multiple drones can frenzy simultaneously.',
+    },
+    {
+      id: 'split_swarm',
+      name: 'SPLIT SWARM',
+      description: 'Each drone splits into two on first contact with an enemy. The split drone seeks a different target independently for 5 seconds then expires. Split drones cannot split again.',
+    },
   ]
 };
 
@@ -87,12 +121,66 @@ function getCryoSpreadStep(lvl) {
   return lvl >= 5 ? 0.34 : lvl >= 4 ? 0.22 : lvl >= 3 ? 0.12 : lvl >= 2 ? 0.08 : 0;
 }
 
-function getEmpRadius(lvl) {
-  return [0, 160, 220, 280, 340, 400][Math.min(lvl, 5)] || 160;
+export const EMP_SCALING = {
+  1: { radius: 160, stun: 1.2, dmgMult: 1.0 },
+  2: { radius: 200, stun: 1.4, dmgMult: 1.3 },
+  3: { radius: 245, stun: 1.6, dmgMult: 1.7 },
+  4: { radius: 295, stun: 1.8, dmgMult: 2.2 },
+  5: { radius: 350, stun: 2.0, dmgMult: 2.8 },
+};
+
+function getEmpScaling(lvl) {
+  return EMP_SCALING[Math.min(Math.max(lvl, 1), 5)] || EMP_SCALING[1];
 }
 
 function getSwarmCount(lvl) {
   return Math.min(6, 1 + lvl);
+}
+
+function mkSwarmDrone(angle) {
+  return {
+    a: angle,
+    state: 'orbit',
+    sx: 0, sy: 0,
+    tx: 0, ty: 0,
+    target: null,
+    cooldown: 0,
+    ht: 0,
+    frenzy: false,
+    frenzyT: 0,
+    pulseOffset: 0,
+    hasSplitThisContact: false,
+  };
+}
+
+function mkNovaDrone() {
+  return {
+    a: Math.random() * Math.PI * 2,
+    ht: 0,
+    life: 8.0,
+    isNova: true,
+    state: 'orbit',
+    sx: 0, sy: 0,
+    tx: 0, ty: 0,
+    target: null,
+    cooldown: 0,
+    pulseOffset: 0,
+  };
+}
+
+function acquireSwarmTarget(allTargets, x, y, seekR, excludedTarget = null) {
+  let bestT = null;
+  let bestDist = seekR * seekR;
+  allTargets.forEach(target => {
+    if (!target || target.hp <= 0) return;
+    if (target === excludedTarget) return;
+    const dd = dist2({ x, y }, target);
+    if (dd < bestDist) {
+      bestDist = dd;
+      bestT = target;
+    }
+  });
+  return bestT;
 }
 
 function getBarrierTier(lvl) {
@@ -120,6 +208,10 @@ function getPulseClusterGeneration(lvl) {
 
 function getPulseBaseDamage(p, lvl) {
   return p.dmg * (28 + lvl * 10);
+}
+
+function getEmpBaseDamage(p) {
+  return p.dmg * 4.6;
 }
 
 function firePulseShell(p, angle, dmg, lvl, overrides = {}) {
@@ -299,21 +391,46 @@ export const WDEFS = {
     getRate: p => 0.4 * (p.rateBonus || 1),
     fire(p, onHitEnemy) {
       const lvl = getWeaponLevel(p, 'emp');
-      const r = getEmpRadius(lvl);
-      const dmg = p.dmg * (12 + lvl * 6);
-      const stunDur = 2.0 + lvl * 0.5;
-      const affected = [];
+      const ascension = getAscension(p, 'emp');
+      const scaling = getEmpScaling(lvl);
+      const r = scaling.radius;
+      const dmg = getEmpBaseDamage(p) * scaling.dmgMult;
+      const stunDur = scaling.stun;
+
+      if (ascension === 'triple_pulse') {
+        this.tripleWaves = this.tripleWaves || [];
+        this.tripleWaves.push({
+          x: p.x,
+          y: p.y,
+          r1: 0,
+          r2: 0,
+          r3: 0,
+          maxR1: (160 + lvl * 38) * 1.0,
+          maxR2: (160 + lvl * 38) * 1.5,
+          maxR3: (160 + lvl * 38) * 2.2,
+          speed1: 500,
+          speed2: 350,
+          speed3: 220,
+          dmg,
+          stunBase: stunDur,
+          hitEnemies: new Set(),
+          hitBoss: false,
+          life: 1.8,
+          r1Sound: false,
+          r2Sound: false,
+          r3Sound: false,
+        });
+        return;
+      }
 
       addRing(p.x, p.y, r, '#BF77FF', 2.5, 0.45);
-      addRing(p.x, p.y, r * 0.4, '#ffffff', 1.5, 0.2);
 
       enemies.forEach(e => {
         if (dist2(p, e) < r * r) {
-          onHitEnemy(e, dmg, '#BF77FF');
+          if (ascension) this.hitEnemy(e, dmg, '#BF77FF');
+          else onHitEnemy(e, dmg, '#BF77FF');
           e.stunT = stunDur;
           e.stunned = true;
-          e.empMarkT = Math.max(e.empMarkT || 0, stunDur);
-          if (e.hp > 0) affected.push(e);
         }
       });
 
@@ -323,13 +440,7 @@ export const WDEFS = {
         if (!boss.stunImmune) {
           boss.stunT = stunDur * 0.5;
           boss.stunned = true;
-          boss.empMarkT = Math.max(boss.empMarkT || 0, stunDur * 0.5);
         }
-        affected.push(boss);
-      }
-
-      if (lvl >= 5) {
-        affected.forEach(target => triggerEmpShockwave(target, p.dmg * 6, onHitEnemy, boss));
       }
       pruneEnemies();
     }
@@ -340,8 +451,9 @@ export const WDEFS = {
     baseRate: 0,
     getRate: () => 0,
     fire() {},
-    tick(p, dt, onHitEnemy) {
+    tick(p, dt, onHitEnemy, helpers = {}) {
       const lvl = getWeaponLevel(p, 'swarm');
+      const ascension = getAscension(p, 'swarm');
       const cnt = getSwarmCount(lvl);
       const orR = 85 + lvl * 15;
       const seekR = 190 + lvl * 30;
@@ -349,41 +461,45 @@ export const WDEFS = {
       const dmgPer = p.dmg * (28 + lvl * 14);
 
       if (!p._dr || p._dr.length !== cnt) {
-        p._dr = Array.from({ length: cnt }, (_, i) => ({
-          a: (i / cnt) * Math.PI * 2,
-          state: 'orbit',
-          sx: 0, sy: 0,
-          tx: 0, ty: 0,
-          target: null,
-          cooldown: 0,
-        }));
+        p._dr = Array.from({ length: cnt }, (_, i) => mkSwarmDrone((i / cnt) * Math.PI * 2));
       }
+      p._novaDrones ||= [];
+      p._splitDrones ||= [];
 
       const boss = getExtraTarget();
       const allTargets = [...enemies, ...(boss?.alive ? [boss] : [])];
 
-      p._dr.forEach(d => {
+      const processDrone = (d, options = {}) => {
+        const isNova = !!options.isNova;
+        const canFrenzy = !isNova && ascension === 'frenzy';
+        const canSplit = !isNova && ascension === 'split_swarm';
+        const speedMult = isNova ? 2 : (canFrenzy && d.frenzy ? 3 : 1);
+        const damageMult = canFrenzy && d.frenzy ? 2 : 1;
+        const hitCooldown = d.frenzy ? 0.08 : 0.55;
+        const droneOrbitR = isNova ? orR * 1.3 : orR;
+
         d.a += dt * 2.2;
+        d.pulseOffset = 0;
         if (d.cooldown > 0) d.cooldown -= dt;
+        if (typeof d.ht === 'number' && d.ht > 0) d.ht -= dt;
+        if (canFrenzy) {
+          d.frenzyT = Math.max(0, (d.frenzyT || 0) - dt);
+          if (d.frenzy && d.frenzyT <= 0) d.frenzy = false;
+        }
 
         if (d.state === 'orbit') {
-          d.sx = p.x + Math.cos(d.a) * orR;
-          d.sy = p.y + Math.sin(d.a) * orR;
-          addDot(d.sx, d.sy, '#1DFFD0', 7, 0.12);
+          d.sx = p.x + Math.cos(d.a) * droneOrbitR;
+          d.sy = p.y + Math.sin(d.a) * droneOrbitR;
+          addDot(d.sx, d.sy, isNova ? '#5DFFE0' : '#1DFFD0', isNova ? 6 : 7, 0.12);
 
           if (d.cooldown <= 0) {
-            let bestT = null;
-            let bestDist = seekR * seekR;
-            allTargets.forEach(e => {
-              const dd = dist2({ x: d.sx, y: d.sy }, e);
-              if (dd < bestDist) { bestDist = dd; bestT = e; }
-            });
+            const bestT = acquireSwarmTarget(allTargets, d.sx, d.sy, seekR);
             if (bestT) {
               d.state = 'seek';
               d.target = bestT;
               d.tx = bestT.x;
               d.ty = bestT.y;
-              addBurst(d.sx, d.sy, '#1DFFD0', 4, 60, 2.5, 0.2);
+              addBurst(d.sx, d.sy, isNova ? '#5DFFE0' : '#1DFFD0', 4, 60, 2.5, 0.2);
             }
           }
         } else if (d.state === 'seek') {
@@ -394,21 +510,52 @@ export const WDEFS = {
           const ddx = d.tx - d.sx;
           const ddy = d.ty - d.sy;
           const dist = Math.sqrt(ddx * ddx + ddy * ddy) || 1;
-          const move = Math.min(dist, seekSpd * dt);
+          const move = Math.min(dist, seekSpd * speedMult * dt);
           d.sx += (ddx / dist) * move;
           d.sy += (ddy / dist) * move;
-          addDot(d.sx, d.sy, '#1DFFD0', 7, 0.14);
+          addDot(d.sx, d.sy, isNova ? '#5DFFE0' : '#1DFFD0', isNova ? 6 : 7, 0.14);
 
           const hitR = d.target === boss ? boss.r : (d.target?.r || 12);
           if (dist < hitR + 10) {
+            if (canSplit && !d.hasSplitThisContact) {
+              d.hasSplitThisContact = true;
+              if (d.target) helpers.spawnSplitDrone?.(p, d, d.target, orR);
+            }
             const prevTarget = d.target;
-            if (prevTarget) onHitEnemy(prevTarget, dmgPer, '#1DFFD0');
+            const hit = prevTarget ? onHitEnemy(prevTarget, dmgPer * damageMult, '#1DFFD0') : null;
             pruneEnemies();
             addBurst(d.sx, d.sy, '#1DFFD0', 7, 100, 3.5, 0.35);
             addRing(d.sx, d.sy, 28, '#1DFFD0', 1.5, 0.2);
-            d.cooldown = 0.55;
-            d.state = 'return';
-            d.target = null;
+            d.cooldown = hitCooldown;
+            d.ht = hitCooldown;
+
+            if (hit?.killed && ascension === 'nova_swarm' && hit.target) {
+              helpers.onNovaDroneKill?.(hit.target.x, hit.target.y, hit.target, {
+                isNova,
+                drone: d,
+              });
+            }
+
+            if (canFrenzy && hit?.killed && prevTarget !== boss) {
+              d.frenzy = true;
+              d.frenzyT = 4.0;
+              helpers.onFrenzyStart?.(d);
+            }
+
+            if (canFrenzy && d.frenzy) {
+              d.target = acquireSwarmTarget(allTargets, d.sx, d.sy, seekR, prevTarget);
+              if (d.target) {
+                d.tx = d.target.x;
+                d.ty = d.target.y;
+                d.state = 'seek';
+              } else {
+                d.state = 'return';
+                d.target = null;
+              }
+            } else {
+              d.state = 'return';
+              d.target = null;
+            }
           }
 
           if (d.target && d.target !== boss && d.target.hp <= 0) {
@@ -417,18 +564,37 @@ export const WDEFS = {
             d.cooldown = 0.2;
           }
         } else {
-          const homeX = p.x + Math.cos(d.a) * orR;
-          const homeY = p.y + Math.sin(d.a) * orR;
+          const homeX = p.x + Math.cos(d.a) * droneOrbitR;
+          const homeY = p.y + Math.sin(d.a) * droneOrbitR;
           const ddx = homeX - d.sx;
           const ddy = homeY - d.sy;
           const dist = Math.sqrt(ddx * ddx + ddy * ddy) || 1;
           const move = Math.min(dist, seekSpd * 1.4 * dt);
           d.sx += (ddx / dist) * move;
           d.sy += (ddy / dist) * move;
-          addDot(d.sx, d.sy, '#1DFFD055', 5, 0.1);
-          if (dist < 12) d.state = 'orbit';
+          addDot(d.sx, d.sy, isNova ? '#5DFFE099' : '#1DFFD055', isNova ? 4 : 5, 0.1);
+          if (dist < 12) {
+            d.state = 'orbit';
+            d.hasSplitThisContact = false;
+          }
         }
-      });
+      };
+
+      p._dr.forEach(d => processDrone(d, { allowPulseVisual: true }));
+
+      for (let i = p._novaDrones.length - 1; i >= 0; i--) {
+        const d = p._novaDrones[i];
+        d.life -= dt;
+        if (d.life <= 0) {
+          helpers.onNovaDroneExpire?.(d.sx ?? p.x, d.sy ?? p.y);
+          p._novaDrones.splice(i, 1);
+          continue;
+        }
+        if (typeof d.state !== 'string') {
+          Object.assign(d, mkNovaDrone(), d);
+        }
+        processDrone(d, { isNova: true, allowPulseVisual: false });
+      }
 
       p._miniDr = [];
     }
@@ -485,19 +651,6 @@ export const WDEFS = {
     }
   }
 };
-
-export function triggerOverload(e, dmg, onHitEnemy, onTrigger) {
-  const x = e.x, y = e.y, r = 100;
-  onTrigger?.();
-  addRing(x, y, r, '#ffffff', 3, 0.5);
-  addRing(x, y, r * 1.4, '#BF77FF', 2, 0.6);
-  addBurst(x, y, '#ffffff', 9, 110, 4, 0.55);
-  addBurst(x, y, '#BF77FF', 9, 90, 3, 0.55);
-  enemies.forEach(f => {
-    if (f !== e && (f.x - x) ** 2 + (f.y - y) ** 2 < r * r) onHitEnemy(f, dmg, '#BF77FF', true);
-  });
-  pruneEnemies();
-}
 
 export function handleCryoImpact(game, bullet, target) {
   if (bullet.meta?.isCryoShard) {
@@ -686,24 +839,6 @@ function applyPulseExplosionDamage(x, y, radius, dmg, onHitEnemy, onHitBoss) {
     const dx = boss.x - x;
     const dy = boss.y - y;
     if (dx * dx + dy * dy < radius * radius) onHitBoss(dmg, '#FFB627');
-  }
-  pruneEnemies();
-}
-
-function triggerEmpShockwave(source, dmg, onHitEnemy, boss) {
-  const radius = 60;
-  addRing(source.x, source.y, radius, '#ffffff', 1.4, 0.28);
-  addRing(source.x, source.y, radius * 0.7, '#BF77FF', 1.8, 0.24);
-  enemies.forEach(target => {
-    if (target === source) return;
-    const dx = target.x - source.x;
-    const dy = target.y - source.y;
-    if (dx * dx + dy * dy < radius * radius) onHitEnemy(target, dmg, '#BF77FF', true);
-  });
-  if (boss?.alive && boss !== source) {
-    const dx = boss.x - source.x;
-    const dy = boss.y - source.y;
-    if (dx * dx + dy * dy < radius * radius) onHitEnemy(boss, dmg, '#BF77FF', true);
   }
   pruneEnemies();
 }

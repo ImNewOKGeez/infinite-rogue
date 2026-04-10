@@ -2,15 +2,18 @@ import { initHUD, updateHUD, showOverlay, hideOverlay, setSurge, setBossBar, sho
 import { initInput, initJoystick, jDir } from './input.js';
 import { CHARACTERS, addWeapon, getAscension, getOwnedWeaponIds, getWeaponLevel, hasAscension, mkPlayer } from './player.js';
 import { enemies, resetEnemies, spawnEnemy, pruneEnemies, dist2, setExtraTarget, clearExtraTarget, tickEnemyStatus, updateEnemyFreezeState } from './enemies.js';
-import { ASCENSIONS, WDEFS, bullets, resetBullets, resetPulseClusters, handleCryoImpact, updateCryoFields, getPulseHitDamage, triggerPulseExplosion, triggerOverload, spawnBullet, applyFreezeMeter, spawnPulseClusters } from './weapons.js';
+import { ASCENSIONS, EMP_SCALING, WDEFS, bullets, resetBullets, resetPulseClusters, handleCryoImpact, updateCryoFields, getPulseHitDamage, triggerPulseExplosion, spawnBullet, applyFreezeMeter, spawnPulseClusters } from './weapons.js';
 import { PASSIVES, buildPool, applyUpgrade, buildAscensionPool, applyAscension } from './upgrades.js';
-import { updateParticles, addRing, addBurst, addDot, drawParticles } from './particles.js';
+import { updateParticles, addRing, addBurst, addDot, addArc, drawParticles } from './particles.js';
 import { mkBoss, updateBoss, drawBoss, hitBoss, BOSS_SPAWN_TIME, BOSS_RESPAWN_DELAY } from './boss.js';
 import { SYNERGIES, recordDiscovery, recordRun } from './progression.js';
 import { WORLD_BOUNDARY_WARN, WORLD_H, WORLD_W } from './constants.js';
 import {
   initAudio, resumeAudio,
-  playCryoFire, playPulseFire, playEmpFire,
+  playEMPSound,
+  playCryoFire, playPulseFire, playCascadeSound, playTriplePulseSound, playArcSound,
+  playNovaDetonationSound,
+  playFrenzySound,
   playHit, playEnemyDeath, playPlayerHit, playDodge,
   playLevelUp, playXp, playSurge, playDeath, playDiscoverySound,
   playShatter,
@@ -37,6 +40,7 @@ export class Game {
     this.selectedCharId = 'ghost';
     this.gt = 0;
     this.lt = 0;
+    this.dt = 0;
     this.running = false;
     this.paused = false;
     this.killCount = 0;
@@ -75,9 +79,13 @@ export class Game {
     this.bgConnections = [];
     this.bgPackets = [];
     this.pendingExplosions = [];
+    this.pendingCascades = [];
+    this.tripleWaves = [];
     this.slowFields = [];
     this.overloadFlash = 0;
     this.chainFlash = 0;
+    this.novaFlashT = 0;
+    this.novaImpactFlashes = [];
   }
 
   start() {
@@ -158,16 +166,25 @@ export class Game {
     this.shatterFlashT = 0;
     this.shatterBursts = [];
     this.pendingExplosions = [];
+    this.pendingCascades = [];
+    this.tripleWaves = [];
     this.slowFields = [];
     this.overloadFlash = 0;
     this.chainFlash = 0;
+    this.novaFlashT = 0;
+    this.novaImpactFlashes = [];
     this.P = mkPlayer(this.W, this.H, char);
     this.P._pulseMines = [];
     this.P._pulseOverloadCounter = 0;
+    this.P._novaDrones = [];
+    this.P._splitDrones = [];
+    this.P._dr = null;
+    this.P._miniDr = [];
     this.camX = 0;
     this.camY = 0;
     this.initBackground();
     if (this.playtestMode) this._applyPlaytestBuildToPlayer();
+    if (this.P._dr) this.P._dr.forEach(d => { d.hasSplitThisContact = false; d.frenzy = false; d.frenzyT = 0; });
     this.P.vx = 0;
     this.P.vy = 0;
     this.shake.x = 0;
@@ -221,6 +238,7 @@ export class Game {
   loop(ts) {
     if (!this.running) return;
     const dt = Math.min((ts - this.lt) / 1000, 0.033);
+    this.dt = dt;
     this.lt = ts;
     if (!this.paused) { this.gt += dt; this.update(dt); }
     this.draw();
@@ -314,6 +332,11 @@ export class Game {
     if (this.shatterFlashT > 0) this.shatterFlashT = Math.max(0, this.shatterFlashT - dt);
     if (this.overloadFlash > 0) this.overloadFlash = Math.max(0, this.overloadFlash - dt);
     if (this.chainFlash > 0) this.chainFlash = Math.max(0, this.chainFlash - dt);
+    if (this.novaFlashT > 0) this.novaFlashT = Math.max(0, this.novaFlashT - dt);
+    this.novaImpactFlashes = this.novaImpactFlashes.filter(flash => {
+      flash.life -= dt;
+      return flash.life > 0;
+    });
     this.shatterBursts = this.shatterBursts.filter(p => {
       p.life -= dt;
       p.x += Math.cos(p.a) * p.spd * dt;
@@ -326,9 +349,12 @@ export class Game {
     this._spawnEnemies(dt);
     this._updateBoss(dt);
     this._fireWeapons(dt);
+    this.updateTripleWaves(dt);
+    this.updatePendingCascades(dt);
     this._updateBullets(dt);
     updateCryoFields(this, dt);
     this.updateSlowFields(dt);
+    this.updateSplitDrones(dt);
     this._updateEnemies(dt);
     this.updatePendingExplosions(dt);
     this.updateMines(dt);
@@ -461,6 +487,113 @@ export class Game {
     this.pendingExplosions.push({ x, y, dmg, clusterGen, delay, sourceMeta });
   }
 
+  handleNovaDroneKill(x, y, killedEnemy, options = {}) {
+    if (!killedEnemy) return;
+    const blastR = 110;
+    const blastDmg = (killedEnemy.maxHp || 0) * 0.4;
+
+    enemies.forEach(e => {
+      if (Math.hypot(e.x - x, e.y - y) < blastR) {
+        this.hitEnemy(e, blastDmg, '#1DFFD0');
+      }
+    });
+    pruneEnemies();
+
+    addRing(x, y, blastR, '#1DFFD0', 2.8, 0.4);
+    addRing(x, y, 60, '#AAFFEE', 1.6, 0.28);
+    addBurst(x, y, '#AAFFEE', 16, 130, 3.2, 0.45);
+    this.novaImpactFlashes.push({ x, y, r: 20, life: 0.1, maxLife: 0.1 });
+    this.novaFlashT = Math.max(this.novaFlashT, 0.1);
+    playNovaDetonationSound();
+
+    if (!options.isNova) {
+      this.P._novaDrones.push({
+        a: Math.random() * Math.PI * 2,
+        ht: 0,
+        life: 8.0,
+        isNova: true,
+      });
+    }
+  }
+
+  handleNovaDroneExpire(x, y) {
+    addBurst(x, y, '#AAFFEE', 5, 35, 2, 0.16);
+    addRing(x, y, 20, '#AAFFEE', 1.4, 0.18);
+  }
+
+  spawnSplitDrone(P, parentDrone, targetEnemy, orbitR) {
+    const takenTargets = new Set(P._splitDrones.map(sd => sd.target).filter(Boolean));
+    takenTargets.add(targetEnemy);
+
+    let bestTarget = null;
+    let bestDist = Infinity;
+    enemies.forEach(e => {
+      if (takenTargets.has(e)) return;
+      if (e.hp <= 0) return;
+      const d = Math.hypot(e.x - P.x, e.y - P.y);
+      if (d < bestDist) {
+        bestDist = d;
+        bestTarget = e;
+      }
+    });
+
+    const spawnX = P.x + Math.cos(parentDrone.a) * orbitR;
+    const spawnY = P.y + Math.sin(parentDrone.a) * orbitR;
+    P._splitDrones.push({
+      x: spawnX,
+      y: spawnY,
+      target: bestTarget,
+      life: 3.0,
+      maxLife: 3.0,
+      ht: 0,
+      speed: 220,
+    });
+
+    addBurst(spawnX, spawnY, '#1DFFD0', 6, 80, 2, 0.3);
+    addRing(spawnX, spawnY, 20, '#1DFFD0', 1.5, 0.2);
+  }
+
+  updateSplitDrones(dt) {
+    if (!this.P._splitDrones?.length) return;
+    const swarmLvl = getWeaponLevel(this.P, 'swarm');
+    const dmg = this.P.dmg * (7 + swarmLvl * 3.5) * 0.6;
+    this.P._splitDrones = this.P._splitDrones.filter(sd => {
+      sd.life -= dt;
+      if (sd.life <= 0) {
+        addBurst(sd.x, sd.y, '#1DFFD066', 4, 40, 1.5, 0.2);
+        return false;
+      }
+
+      if (!sd.target || sd.target.hp <= 0) {
+        const takenTargets = new Set(
+          this.P._splitDrones
+            .filter(other => other !== sd)
+            .map(other => other.target)
+            .filter(Boolean)
+        );
+        sd.target = enemies.find(e => e.hp > 0 && !takenTargets.has(e))
+          || enemies.find(e => e.hp > 0)
+          || null;
+      }
+
+      if (sd.target) {
+        const dx = sd.target.x - sd.x;
+        const dy = sd.target.y - sd.y;
+        const d = Math.sqrt(dx * dx + dy * dy) || 1;
+        sd.x += (dx / d) * sd.speed * dt;
+        sd.y += (dy / d) * sd.speed * dt;
+
+        sd.ht = Math.max(0, (sd.ht || 0) - dt);
+        if (d < sd.target.r + 4 && sd.ht <= 0) {
+          sd.ht = 0.3;
+          this.hitEnemy(sd.target, dmg, '#1DFFD0');
+          pruneEnemies();
+        }
+      }
+      return true;
+    });
+  }
+
   updatePendingExplosions(dt) {
     if (!this.pendingExplosions.length) return;
     for (let i = this.pendingExplosions.length - 1; i >= 0; i--) {
@@ -493,6 +626,215 @@ export class Game {
       );
       this.pendingExplosions.splice(i, 1);
     }
+  }
+
+  updateTripleWaves(dt) {
+    if (!this.tripleWaves?.length) return;
+    this.tripleWaves = this.tripleWaves.filter(wave => {
+      wave.r1 = Math.min(wave.r1 + wave.speed1 * dt, wave.maxR1);
+      wave.r2 = Math.min(wave.r2 + wave.speed2 * dt, wave.maxR2);
+      wave.r3 = Math.min(wave.r3 + wave.speed3 * dt, wave.maxR3);
+      wave.life -= dt;
+
+      if (!wave.r1Sound && wave.r1 > wave.maxR1 * 0.2) {
+        wave.r1Sound = true;
+        playTriplePulseSound(1);
+      }
+      if (!wave.r2Sound && wave.r2 > wave.maxR2 * 0.2) {
+        wave.r2Sound = true;
+        playTriplePulseSound(2);
+      }
+      if (!wave.r3Sound && wave.r3 > wave.maxR3 * 0.2) {
+        wave.r3Sound = true;
+        playTriplePulseSound(3);
+      }
+
+      enemies.forEach(e => {
+        if (wave.hitEnemies.has(e)) return;
+        const d = Math.hypot(e.x - wave.x, e.y - wave.y);
+        if (d <= wave.r1 + e.r) {
+          wave.hitEnemies.add(e);
+          this.hitEnemy(e, wave.dmg, '#BF77FF');
+          if (e.hp <= 0) return;
+          this.applyTriplePulseKnockback(e, wave, 1);
+        } else if (d <= wave.r2 + e.r) {
+          wave.hitEnemies.add(e);
+          this.hitEnemy(e, wave.dmg * 0.6, '#9955DD');
+          if (e.hp <= 0) return;
+          this.applyTriplePulseKnockback(e, wave, 2);
+        } else if (d <= wave.r3 + e.r) {
+          wave.hitEnemies.add(e);
+          this.hitEnemy(e, wave.dmg * 0.3, '#7733BB');
+          if (e.hp <= 0) return;
+          this.applyTriplePulseKnockback(e, wave, 3);
+        }
+      });
+
+      if (this.boss?.alive && !wave.hitBoss) {
+        const d = Math.hypot(this.boss.x - wave.x, this.boss.y - wave.y);
+        if (d <= wave.r1 + this.boss.r) {
+          wave.hitBoss = true;
+          this._doBossHit(wave.dmg, '#BF77FF');
+        } else if (d <= wave.r2 + this.boss.r) {
+          wave.hitBoss = true;
+          this._doBossHit(wave.dmg * 0.6, '#9955DD');
+        } else if (d <= wave.r3 + this.boss.r) {
+          wave.hitBoss = true;
+          this._doBossHit(wave.dmg * 0.3, '#7733BB');
+        }
+      }
+
+      pruneEnemies();
+      return wave.life > 0 && (wave.r1 < wave.maxR1 || wave.r2 < wave.maxR2 || wave.r3 < wave.maxR3);
+    });
+  }
+
+  applyTriplePulseKnockback(e, wave, ring) {
+    const knockAngle = Math.atan2(e.y - wave.y, e.x - wave.x);
+    const baseStrength = ring === 1 ? 80 : ring === 2 ? 140 : 200;
+    const typeMult = e.type === 'brute' ? 0.4 : e.type === 'runner' ? 1.3 : 1;
+    const strength = baseStrength * typeMult;
+    e._knockVx = Math.cos(knockAngle) * strength;
+    e._knockVy = Math.sin(knockAngle) * strength;
+    e._knockT = 0.35;
+  }
+
+  applyCascadePulse(hitEnemies) {
+    if (!hitEnemies?.length) return;
+    hitEnemies.forEach(source => {
+      if (!source || source.hp <= 0) return;
+      this.pendingCascades.push({
+        x: source.x,
+        y: source.y,
+        sourceEnemy: source,
+        delay: 0.4,
+        fired: false,
+      });
+    });
+  }
+
+  updatePendingCascades(dt) {
+    if (!this.pendingCascades?.length) return;
+    this.pendingCascades = this.pendingCascades.filter(cascade => {
+      cascade.delay -= dt;
+      if (cascade.sourceEnemy && cascade.sourceEnemy.hp > 0) {
+        cascade.x = cascade.sourceEnemy.x;
+        cascade.y = cascade.sourceEnemy.y;
+      }
+
+      const chargeProgress = 1 - (cascade.delay / 0.4);
+      const chargeR = chargeProgress * 40;
+      if (chargeR > 0) {
+        addRing(cascade.x, cascade.y, chargeR, '#CC66FF', 1.5, 0.08, {
+          shadowColor: '#CC66FF',
+          shadowBlur: 8,
+        });
+      }
+
+      if (cascade.delay <= 0 && !cascade.fired) {
+        cascade.fired = true;
+        this.fireCascadeBurst(cascade.x, cascade.y);
+        return false;
+      }
+      return !cascade.fired;
+    });
+  }
+
+  fireCascadeBurst(x, y) {
+    const cascadeR = 100;
+    const cascadeDmg = this.P.dmg * 8;
+
+    addRing(x, y, cascadeR, '#CC66FF', 2.5, 0.45, {
+      shadowColor: '#CC66FF',
+      shadowBlur: 10,
+    });
+    addBurst(x, y, '#CC66FF', 8, 80, 2.5, 0.4);
+
+    enemies.forEach(e => {
+      if (e._cascaded) return;
+      const d = Math.hypot(e.x - x, e.y - y);
+      if (d >= cascadeR) return;
+      this.hitEnemy(e, cascadeDmg, '#CC66FF');
+      if (e.hp <= 0) return;
+      e.stunned = true;
+      e.stunT = 1.0;
+      e._cascaded = true;
+    });
+    pruneEnemies();
+    playCascadeSound();
+  }
+
+  applyArcDischarge(_empBurstDmg) {
+    const arcsDrawn = [];
+    const MAX_ARCS_PER_ENEMY = 3;
+    const ARC_RANGE = 250;
+    const MAX_TOTAL_ARCS = 20;
+    const stunnedEnemies = enemies.filter(e => e.hp > 0 && e.stunned);
+
+    for (const stunned of stunnedEnemies) {
+      if (arcsDrawn.length >= MAX_TOTAL_ARCS) break;
+
+      const nonStunnedCandidates = enemies
+        .map(target => ({
+          target,
+          dist: Math.hypot(target.x - stunned.x, target.y - stunned.y),
+        }))
+        .filter(({ target, dist }) => target !== stunned && target.hp > 0 && !target.stunned && dist < ARC_RANGE)
+        .sort((a, b) => a.dist - b.dist)
+        .slice(0, MAX_ARCS_PER_ENEMY);
+
+      const fallbackCandidates = nonStunnedCandidates.length
+        ? []
+        : enemies
+          .map(target => ({
+            target,
+            dist: Math.hypot(target.x - stunned.x, target.y - stunned.y),
+          }))
+          .filter(({ target, dist }) => target !== stunned && target.hp > 0 && target.stunned && dist < ARC_RANGE)
+          .sort((a, b) => (a.target.hp - b.target.hp) || (a.dist - b.dist))
+          .slice(0, MAX_ARCS_PER_ENEMY);
+
+      const candidates = nonStunnedCandidates.length ? nonStunnedCandidates : fallbackCandidates;
+
+      for (const { target } of candidates) {
+        if (arcsDrawn.length >= MAX_TOTAL_ARCS) break;
+        if (target.hp <= 0) continue;
+
+        const dmg = target.maxHp * 0.12;
+        const hit = this.hitEnemy(target, dmg, '#BF77FF');
+        if (hit.killed) {
+          arcsDrawn.push({
+            x1: stunned.x,
+            y1: stunned.y,
+            x2: target.x,
+            y2: target.y,
+          });
+          continue;
+        }
+        target.stunT = Math.max(target.stunT || 0, 0.5);
+        target.stunned = true;
+        arcsDrawn.push({
+          x1: stunned.x,
+          y1: stunned.y,
+          x2: target.x,
+          y2: target.y,
+        });
+      }
+    }
+
+    pruneEnemies();
+
+    arcsDrawn.forEach(arc => {
+      addArc(arc.x1, arc.y1, arc.x2, arc.y2, 0.3, '#BF77FF', {
+        glowColor: 'rgba(191, 119, 255, 0.3)',
+        glowWidth: 6,
+        lineWidth: 2,
+        shadowColor: '#BF77FF',
+        shadowBlur: 16,
+      });
+    });
+
+    if (arcsDrawn.length > 0) playArcSound();
   }
 
   _applyCollapsedRoundPull(x, y) {
@@ -801,19 +1143,51 @@ export class Game {
       const r = w.getRate(P);
       if (r > 0 && P.ft[wid] >= 1 / r) {
         P.ft[wid] = 0;
-        w.fire(P, onHit, {
+        let empPreStun = null;
+        let empPreHp = null;
+        let empEnemyPool = null;
+        const empAscension = wid === 'emp' ? getAscension(P, 'emp') : null;
+        if (wid === 'emp' && empAscension === 'cascade_pulse') {
+          empEnemyPool = [...enemies];
+          empPreHp = new Map(empEnemyPool.map(e => [e.id, e.hp]));
+        }
+        if (wid === 'emp' && (empAscension === 'cascade_pulse' || empAscension === 'arc_discharge')) {
+          empPreStun = new Map(enemies.map(e => [e.id, !!e.stunned && (e.stunT || 0) > 0]));
+        }
+        w.fire.call(this, P, onHit, {
           addText: (...args) => this.addDN(...args),
           triggerSynergy: (id) => this.triggerSynergy(id),
         });
+        if (wid === 'emp' && empPreStun) {
+          const newlyStunned = enemies.filter(e => {
+            const wasStunned = empPreStun.get(e.id);
+            return e.hp > 0 && !wasStunned && e.stunned && (e.stunT || 0) > 0;
+          });
+          if (empAscension === 'cascade_pulse') {
+            const hitEnemies = (empEnemyPool || []).filter(e => {
+              const prevHp = empPreHp?.get(e.id);
+              return e.hp > 0 && prevHp != null && e.hp < prevHp;
+            });
+            this.applyCascadePulse(hitEnemies);
+          }
+          if (empAscension === 'arc_discharge') {
+            const lvl = getWeaponLevel(P, 'emp');
+            this.applyArcDischarge(P.dmg * 5.4 * (EMP_SCALING[lvl]?.dmgMult || EMP_SCALING[1].dmgMult));
+          }
+        }
         if (wid === 'cryo' && !hasAscension(P, 'cryo', 'frost_field')) playCryoFire();
         else if (wid === 'pulse') playPulseFire();
-        else if (wid === 'emp') playEmpFire();
+        else if (wid === 'emp' && empAscension !== 'triple_pulse') playEMPSound();
       }
       w.tick?.(P, dt, onHit, {
         enemies,
         addParticle: (...args) => addRing(...args),
         applyFreezeMeter: (target, amount) => applyFreezeMeter(target, amount),
         triggerSynergy: (id) => this.triggerSynergy(id),
+        onNovaDroneKill: (x, y, killedEnemy, options) => this.handleNovaDroneKill(x, y, killedEnemy, options),
+        onNovaDroneExpire: (x, y) => this.handleNovaDroneExpire(x, y),
+        onFrenzyStart: () => playFrenzySound(),
+        spawnSplitDrone: (player, parentDrone, targetEnemy, orbitR) => this.spawnSplitDrone(player, parentDrone, targetEnemy, orbitR),
         onShieldBreak: (player, tier) => this._breakShield(player, tier),
         onShieldRestore: (player) => this._restoreShield(player),
       });
@@ -992,7 +1366,18 @@ export class Game {
     enemies.forEach(e => {
       updateEnemyFreezeState(e, dt, P);
       tickEnemyStatus(e, dt);
-      if (e.overloadMarkT > 0) e.overloadMarkT -= dt;
+      if (!e.stunned || (e.stunT || 0) <= 0) {
+        e.isSecondaryCascade = false;
+        e._cascaded = false;
+      }
+      if ((e._knockT || 0) > 0) {
+        e._knockT = Math.max(0, e._knockT - dt);
+        const knockDecay = e._knockT / 0.35;
+        e.x += (e._knockVx || 0) * knockDecay * dt;
+        e.y += (e._knockVy || 0) * knockDecay * dt;
+        e.x = cl(e.x, e.r, WORLD_W - e.r);
+        e.y = cl(e.y, e.r, WORLD_H - e.r);
+      }
       this.slowFields.forEach(field => {
         if (Math.hypot(e.x - field.x, e.y - field.y) < field.r) {
           e.slowT = 0.3;
@@ -1079,9 +1464,13 @@ export class Game {
     return { killed: false, target: this.boss, damage: dmg };
   }
 
-  hitEnemy(e, dmg, col, isSynergy = false) {
+  hitEnemy(e, dmg, col, isSynergy = false, minHpFloor = null) {
     if (this.P.char === 'bruiser' && this.P.hp < this.P.maxHp * 0.5) dmg *= 1.35;
     if (this._maybeApplyShatter(e)) dmg = 0;
+    if (minHpFloor != null) {
+      const floor = Math.max(1, minHpFloor);
+      if (e.hp - dmg < floor) dmg = Math.max(0, e.hp - floor);
+    }
     e.hp -= dmg; e.hitFlash = 0.1;
     const numCol = isSynergy ? '#FFB627' : col === '#00CFFF' ? '#00CFFF' : col === '#BF77FF' ? '#BF77FF' : '#fff';
     if (dmg > 0) this.addDN(e.x, e.y - e.r, Math.round(dmg), numCol, 0.7, isSynergy);
@@ -1089,14 +1478,6 @@ export class Game {
     const now = performance.now();
     if (now - this._lastHitSound > 80) { playHit(isSynergy); this._lastHitSound = now; }
     if (e.hp <= 0) {
-      if (getWeaponLevel(this.P, 'emp') >= 3 && e.empMarkT > 0 && !e._overloadTriggered) {
-        e._overloadTriggered = true;
-        triggerOverload(
-          e,
-          Math.max(dmg * 0.65, this.P.dmg * 18),
-          (target, splash, splashCol, synergyHit) => this.hitEnemy(target, splash, splashCol, synergyHit)
-        );
-      }
       this.killCount++;
       const xpVal = (this.P.char === 'hacker' && e.stunned) ? e.xp * 2 : e.xp;
       if (e.frozen) this._triggerCryoNova(e);
@@ -1610,6 +1991,50 @@ export class Game {
     ctx.restore();
   }
 
+  drawTripleWaves() {
+    const { ctx } = this;
+    this.tripleWaves.forEach(wave => {
+      ctx.save();
+      const a1 = Math.max(0, 1 - wave.r1 / wave.maxR1) * wave.life;
+      ctx.globalAlpha = a1 * 0.9;
+      ctx.strokeStyle = '#BF77FF';
+      ctx.lineWidth = 3;
+      ctx.shadowColor = '#BF77FF';
+      ctx.shadowBlur = 14;
+      ctx.beginPath();
+      ctx.arc(wave.x, wave.y, wave.r1, 0, Math.PI * 2);
+      ctx.stroke();
+
+      if (wave.r2 > 0) {
+        const a2 = Math.max(0, 1 - wave.r2 / wave.maxR2) * wave.life;
+        ctx.globalAlpha = a2 * 0.65;
+        ctx.strokeStyle = '#9955DD';
+        ctx.lineWidth = 2;
+        ctx.shadowColor = '#9955DD';
+        ctx.shadowBlur = 8;
+        ctx.beginPath();
+        ctx.arc(wave.x, wave.y, wave.r2, 0, Math.PI * 2);
+        ctx.stroke();
+      }
+
+      if (wave.r3 > 0) {
+        const a3 = Math.max(0, 1 - wave.r3 / wave.maxR3) * wave.life;
+        ctx.globalAlpha = a3 * 0.4;
+        ctx.strokeStyle = '#7733BB';
+        ctx.lineWidth = 1.5;
+        ctx.shadowColor = '#7733BB';
+        ctx.shadowBlur = 4;
+        ctx.beginPath();
+        ctx.arc(wave.x, wave.y, wave.r3, 0, Math.PI * 2);
+        ctx.stroke();
+      }
+
+      ctx.globalAlpha = 1;
+      ctx.shadowBlur = 0;
+      ctx.restore();
+    });
+  }
+
   drawShatterBursts() {
     const { ctx } = this;
     this.shatterBursts.forEach(p => {
@@ -1779,42 +2204,6 @@ export class Game {
         ctx.arc(e.x, e.y, e.r + 3, 0, Math.PI * 2);
         ctx.stroke();
       }
-
-      if (!perfMode && e.empMarkT > 0) {
-        const pulse = 0.45 + 0.55 * Math.sin(this.gt * 10 + e.id * 0.7);
-        ctx.strokeStyle = `rgba(255,255,255,${0.18 + pulse * 0.22})`;
-        ctx.lineWidth = 1.8;
-        ctx.beginPath();
-        ctx.arc(e.x, e.y, e.r + 5 + pulse * 1.5, 0, Math.PI * 2);
-        ctx.stroke();
-        ctx.strokeStyle = `rgba(191,119,255,${0.28 + pulse * 0.32})`;
-        ctx.lineWidth = 2.2;
-        ctx.beginPath();
-        ctx.arc(e.x, e.y, e.r + 9 + pulse * 2, 0, Math.PI * 2);
-        ctx.stroke();
-      }
-
-      if (!perfMode && e.overloadMarkT > 0) {
-        const pulse = 0.55 + 0.45 * Math.sin(this.gt * 14 + e.id);
-        ctx.strokeStyle = `rgba(255,255,255,${0.22 + pulse * 0.28})`;
-        ctx.lineWidth = 2;
-        ctx.beginPath();
-        ctx.arc(e.x, e.y, e.r + 7 + pulse * 2, 0, Math.PI * 2);
-        ctx.stroke();
-        ctx.strokeStyle = `rgba(191,119,255,${0.38 + pulse * 0.34})`;
-        ctx.lineWidth = 2.5;
-        ctx.beginPath();
-        ctx.arc(e.x, e.y, e.r + 11 + pulse * 2, 0, Math.PI * 2);
-        ctx.stroke();
-        for (let i = 0; i < 4; i++) {
-          const a = this.gt * 7 + e.id + (i / 4) * Math.PI * 2;
-          const px = e.x + Math.cos(a) * (e.r + 10);
-          const py = e.y + Math.sin(a) * (e.r + 10);
-          ctx.fillStyle = '#ffffff';
-          ctx.fillRect(px - 1.5, py - 1.5, 3, 3);
-        }
-      }
-
       if (!perfMode || e.type === 'brute') {
         const bw = e.r * 2 + 2;
         ctx.fillStyle = '#111';
@@ -1931,30 +2320,86 @@ export class Game {
 
   drawPlayer() {
     const { ctx, P } = this;
-    const drawDrone = (drone, mini = false) => {
-      const r = mini ? 4 : 7;
-      const fill = mini ? '#d7fff3' : '#1DFFD0';
-      const stroke = mini ? '#FFB627' : '#a2ffeb';
-      ctx.shadowColor = stroke;
-      ctx.shadowBlur = mini ? 10 : 14;
+    const drawDrone = (drone, options = {}) => {
+      let x = options.overridePos?.x ?? drone.sx ?? drone.x;
+      let y = options.overridePos?.y ?? drone.sy ?? drone.y;
+      if (x == null || y == null) return;
+      if ((drone.pulseOffset || 0) > 0 && !options.ignorePulseOffset) {
+        const dx = P.x - x;
+        const dy = P.y - y;
+        const dist = Math.hypot(dx, dy) || 1;
+        x += (dx / dist) * drone.pulseOffset;
+        y += (dy / dist) * drone.pulseOffset;
+      }
+      const r = options.radius ?? 7;
+      const fill = options.fill ?? '#1DFFD0';
+      const stroke = options.stroke ?? '#a2ffeb';
+      const alpha = options.alpha ?? 1;
+      ctx.shadowColor = options.shadowColor ?? stroke;
+      ctx.shadowBlur = options.shadowBlur ?? 14;
+      ctx.globalAlpha = alpha;
       ctx.fillStyle = fill;
       ctx.strokeStyle = stroke;
-      ctx.lineWidth = mini ? 1.4 : 1.8;
+      ctx.lineWidth = options.lineWidth ?? 1.8;
       ctx.beginPath();
-      ctx.arc(drone.x, drone.y, r, 0, Math.PI * 2);
+      ctx.arc(x, y, r, 0, Math.PI * 2);
       ctx.fill();
       ctx.stroke();
-      if (mini) {
+      if (options.outerRing) {
         ctx.strokeStyle = 'rgba(255,182,39,0.45)';
         ctx.beginPath();
-        ctx.arc(drone.x, drone.y, r + 3, 0, Math.PI * 2);
+        ctx.arc(x, y, r + 3, 0, Math.PI * 2);
         ctx.stroke();
       }
+      ctx.globalAlpha = 1;
       ctx.shadowBlur = 0;
     };
 
-    (P._dr || []).forEach(drone => drawDrone(drone, false));
-    (P._miniDr || []).forEach(drone => drawDrone(drone, true));
+    (P._dr || []).forEach(drone => {
+      const isFrenzied = !!drone.frenzy;
+      drawDrone(drone, {
+        radius: 5,
+        fill: isFrenzied ? '#FFB627' : '#1DFFD0',
+        stroke: isFrenzied ? '#FFB627' : '#a2ffeb',
+        shadowBlur: isFrenzied ? 8 : 14,
+      });
+    });
+    (P._novaDrones || []).forEach((drone, index) => {
+      const x = drone.sx ?? drone.x;
+      const y = drone.sy ?? drone.y;
+      if (x == null || y == null) return;
+      const lifeRatio = Math.max(0, Math.min(1, (drone.life || 0) / 8));
+      const pulse = 1 + Math.sin(this.gt * 4 + index * 1.2) * 0.15;
+      ctx.save();
+      ctx.translate(x, y);
+      ctx.rotate(Math.PI / 4);
+      ctx.scale(pulse, pulse);
+      ctx.fillStyle = '#FFFFFF';
+      ctx.shadowColor = '#1DFFD0';
+      ctx.shadowBlur = 16;
+      ctx.fillRect(-6, -6, 12, 12);
+      ctx.restore();
+      ctx.strokeStyle = 'rgba(255,255,255,0.6)';
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      ctx.arc(x, y, 18 * lifeRatio, 0, Math.PI * 2);
+      ctx.stroke();
+      ctx.fillStyle = '#FFFFFF';
+      ctx.font = '8px Courier New';
+      ctx.textAlign = 'center';
+      ctx.fillText('N', x, y - 16);
+      ctx.shadowBlur = 0;
+    });
+    (P._miniDr || []).forEach(drone => {
+      drawDrone(drone, {
+        radius: 4,
+        fill: '#d7fff3',
+        stroke: '#FFB627',
+        shadowBlur: 10,
+        lineWidth: 1.4,
+        outerRing: true,
+      });
+    });
 
     const fl = P.invT > 0 && Math.floor(P.invT * 12) % 2 === 0;
     ctx.shadowColor = fl ? '#fff' : P.col;
@@ -2124,6 +2569,11 @@ export class Game {
       ctx.fillRect(0, 0, W, H);
     }
 
+    if (this.novaFlashT > 0) {
+      ctx.fillStyle = `rgba(29,255,208,${0.05 * Math.min(1, this.novaFlashT / 0.1)})`;
+      ctx.fillRect(0, 0, W, H);
+    }
+
     ctx.globalAlpha = 1;
   }
 
@@ -2177,7 +2627,10 @@ export class Game {
     ctx.translate(-this.camX + this.shake.x, -this.camY + this.shake.y);
     this.drawBackground();
     this.drawCryoFields();
+    this.drawTripleWaves();
     drawParticles(ctx);
+    this.drawNovaImpactFlashes();
+    this.drawSplitDrones();
     this.drawShatterBursts();
     this.drawGems();
     this.drawMines();
@@ -2260,10 +2713,48 @@ export class Game {
     }
     ctx.restore();
   }
+
+  drawNovaImpactFlashes() {
+    const { ctx } = this;
+    if (!this.novaImpactFlashes.length) return;
+    this.novaImpactFlashes.forEach(flash => {
+      const alpha = flash.life / flash.maxLife;
+      ctx.save();
+      ctx.globalAlpha = alpha;
+      ctx.fillStyle = '#FFFFFF';
+      ctx.beginPath();
+      ctx.arc(flash.x, flash.y, flash.r, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.restore();
+    });
+  }
+
+  drawSplitDrones() {
+    const { ctx } = this;
+    if (!this.P._splitDrones?.length) return;
+    this.P._splitDrones.forEach((sd, i) => {
+      const a = Math.min(1, sd.life / sd.maxLife);
+      ctx.globalAlpha = a * 0.85;
+      ctx.fillStyle = '#88FFDD';
+      ctx.shadowColor = '#1DFFD0';
+      ctx.shadowBlur = 8;
+      ctx.beginPath();
+      ctx.arc(sd.x, sd.y, 5, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.strokeStyle = '#1DFFD0';
+      ctx.lineWidth = 1;
+      ctx.beginPath();
+      ctx.arc(sd.x, sd.y, 8, 0, Math.PI * 2);
+      ctx.stroke();
+      ctx.shadowBlur = 0;
+      ctx.globalAlpha = 1;
+    });
+  }
 }
 
 function wStats(wid, lvl, p) {
   const rb = p.rateBonus || 1;
+  const empScaling = EMP_SCALING[Math.min(Math.max(lvl, 1), 5)] || EMP_SCALING[1];
   const rates = {
     cryo: (1.9 + lvl * 0.35) * rb,
     pulse: 0.45 * rb,
@@ -2274,7 +2765,7 @@ function wStats(wid, lvl, p) {
   const r = (rates[wid] || 0).toFixed(1);
   if (wid === 'cryo') return [`Rate: ${r}/s`, `Projectiles: ${Math.min(5, Math.max(1, lvl))}`, lvl >= 2 ? 'Spread: widening fan' : 'Slow: 50% for 2s', 'Pierce: 1 enemy'];
   if (wid === 'pulse') return [`Rate: ${r}/s`, `Dmg: ${Math.round(p.dmg * (28 + lvl * 10))}`, 'Impact: heavy explosive shot', lvl >= 2 ? 'Cluster: splits on impact' : 'Cooldown: long', lvl >= 5 ? 'Cluster: four split layers' : lvl >= 4 ? 'Cluster: three split layers' : lvl >= 3 ? 'Cluster: bomblets split again' : ''];
-  if (wid === 'emp') return [`Rate: ${r}/s`, `Radius: ${[0, 160, 220, 280, 340, 400][Math.min(lvl, 5)]}px`, `Stun: ${(2.0 + lvl * 0.5).toFixed(1)}s`, lvl >= 5 ? 'Affected enemies emit shockwaves' : ''];
+  if (wid === 'emp') return [`Rate: ${r}/s`, `Radius: ${empScaling.radius}px`, `Stun: ${empScaling.stun.toFixed(1)}s`, `Dmg mult: x${empScaling.dmgMult.toFixed(1)}`];
   if (wid === 'swarm') return [`Drones: ${Math.min(6, 1 + lvl)}`, `Dmg/hit: ${Math.round(p.dmg * (28 + lvl * 14))}`, 'Orbit: auto-seek', lvl >= 2 ? 'Upgrade: +1 drone' : ''];
   if (wid === 'barrier') {
     const tier = WDEFS.barrier.tiers[Math.min(lvl, 5)];
@@ -2300,11 +2791,11 @@ function wDesc(wid, lvl) {
       5: 'Pulse reaches full cluster saturation, with yet another recursive split layer for a huge blast web.'
     },
     emp: {
-      1: 'Releases a 160px radial stun burst with a 2 second disable window.',
-      2: 'EMP expands into a larger 220px control burst.',
-      3: 'EMP grows again into a 280px stun field.',
-      4: 'EMP grows again into a 340px stun field.',
-      5: 'EMP reaches a massive 400px burst, and affected enemies emit small shockwaves into nearby targets.'
+      1: 'Releases a 160px EMP burst that lightly damages and stuns enemies for 1.2 seconds.',
+      2: 'EMP grows to 200px, hits harder, and stuns for 1.4 seconds.',
+      3: 'EMP reaches 245px with stronger damage and a 1.6 second stun.',
+      4: 'EMP expands to 295px with a 1.8 second stun and higher control damage.',
+      5: 'EMP peaks at a 350px burst with a 2.0 second stun and 2.8x damage scaling.'
     },
     swarm: {
       1: 'Deploys 2 orbiting drones that seek targets and strike automatically.',
