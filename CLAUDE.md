@@ -135,6 +135,7 @@ Broad by intent. The game should be readable for casual players and strategicall
 - Main menu overlay with character selection, records access, and active-loadout presentation.
 - Playtest lab overlay with instant weapon/passive/ascension editing, optional in-run reopening, and lab-specific restart/refill actions.
 - Canvas-based core gameplay loop with keyboard plus virtual joystick support.
+- Camera-centred world-space rendering across a fixed `3000 x 3000` arena, with the player moving through the world instead of staying inside screen bounds.
 - Capacitor is configured with a generated Android project, mobile viewport/safe-area handling, touch hardening, and placeholder native app assets.
 - Three playable characters: Ghost, Bruiser, Hacker.
 - Five total weapons in the pool, but only four weapon slots can be owned in a run.
@@ -150,6 +151,8 @@ Broad by intent. The game should be readable for casual players and strategicall
 - Persistent synergy discovery tracking with first-discovery pause overlay.
 - Procedural audio for weapons, hits, XP, surges, boss warning/phases/death, and boss music.
 - Stronger damage feedback including screen flash, low-health vignette, HP lag bar, and barrier-heal HP bar segment.
+- Data-network background nodes, links, and packet motion generated once per run and culled to the current camera view.
+- Red world-boundary warning overlays plus hard player clamping at the arena edge.
 - Cryo freeze buildup is live with per-enemy freeze meters, thaw cooldowns, frost visuals, and thaw burst feedback.
 - Bruiser low-HP damage bonus and Hacker stunned-enemy XP bonus are live, but still implemented as `game.js` checks rather than as clean character passive hooks.
 
@@ -157,6 +160,7 @@ Broad by intent. The game should be readable for casual players and strategicall
 - Developer-facing overlay for quickly assembling a test build, previewing resulting player stats, and starting or reopening a run in that test state.
 - Accessed from the main menu through the `PLAYTEST LAB` button. During a playtest run, it can also be reopened through the on-screen `LAB` button, and `L` reopens it while a playtest run is active if no other overlay or discovery pause is up.
 - Exposes direct weapon tier editing for every weapon, passive stack editing, Ascension selection for weapons that are set to Tier 5, and run actions including start test session, resume test, refill HP, reset build, restart test, and return to menu.
+- Any newly added feature that materially affects gameplay should also be made available in the playtest lab so it can be exercised quickly without needing a full progression path or long run setup.
 - The selected playtest build itself is only kept in runtime memory, but playtest runs are not isolated from progression: deaths still write run records through `recordRun()`, and any first-time synergy discoveries still persist through `recordDiscovery()`.
 - It should be hidden or disabled before public release or store submission unless that save/progression coupling is intentionally made player-facing, because it currently exposes direct build editing from the main menu and during test runs.
 
@@ -399,7 +403,7 @@ ios/           - generated Capacitor iOS project when created on a Mac; absent o
 src/
   main.js        - app entry, loads save and starts Game
   progression.js - save schema, records, synergy persistence
-  game.js        - core loop, menus, overlays, run flow, combat orchestration
+  game.js        - core loop, menus, overlays, run flow, combat orchestration, world camera state, and background/boundary rendering via `initBackground`, `updateBackground`, `drawBackground`, and `drawBoundaryWarning`
   player.js      - character roster, player factory, weapon-state helpers
   weapons.js     - weapon defs, bullets, ascension defs, cryo ascension hooks, pulse clusters, shield logic hooks
   enemies.js     - enemy roster, spawn logic, targeting and status helpers, freeze-state updates, and freeze spread
@@ -422,6 +426,7 @@ src/
 - Vite for dev/build.
 - Mobile update workflow is `npm run build` -> `npx cap sync` -> open the Android project in Android Studio.
 - Game state primarily lives on the `Game` instance.
+- `WORLD_W` and `WORLD_H` currently define a shared fixed arena size of `3000`.
 - Arrays for active entities are acceptable; prune/filter dead entries.
 - Prefer readable formulas over over-engineered abstractions.
 - Weapon modules should communicate through callbacks/helpers rather than importing `game.js` directly where possible.
@@ -473,6 +478,9 @@ src/
 6. Refactor character passives from hardcoded `game.js` checks into a hook surface on the character definition object in `player.js`. This is required before the roster expands beyond three characters.
 
 ## Changelog
+- 2026-04-10: Fixed the first world-space regression by changing bullet pruning to use arena coordinates instead of screen bounds, clamped the camera to the arena edges, strengthened the world-boundary warning with deeper reach plus pulse/edge-line cues, and exposed world/camera debug values in the playtest lab.
+- 2026-04-10: Added a camera-centred world-space arena (`WORLD_W`/`WORLD_H` = `3000`), moved enemies and boss spawning into world coordinates, added the data-network background pass with packet animation and culling, and added boundary warning overlays.
+- 2026-04-10: Clarified in this brief that new gameplay-affecting features should be surfaced through the playtest lab, and updated the playtest lab overlay styling so it supports visible touch scrolling on mobile devices.
 - 2026-04-10: Reworked the main menu for small mobile screens by collapsing the separate loadout panel into the selected character card, tightening card spacing, shrinking the records control into a compact text button, and reserving a persistent bottom action area so `JACK IN` stays visible on short Android displays without scrolling.
 - 2026-04-09: Documented the live playtest lab and passive-hook debt, removed legacy weapon `stats`/`paths` state from `player.js`, added the Claude Code architecture-flagging instruction, set up Capacitor with Android scaffolding plus mobile viewport/audio/touch hardening, generated placeholder native assets, and updated `.gitignore` plus this brief to match the current repo state.
 - 2026-04-09: Updated this brief to match the live code more closely by documenting the playtest lab, recording that Bruiser/Hacker passive hooks still live in `game.js`, and preserving the remaining legacy weapon-state fields from the older path-tree experiment as an active architecture concern.

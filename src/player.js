@@ -1,3 +1,5 @@
+import { WORLD_H, WORLD_W } from './constants.js';
+
 export const CHARACTERS = {
   ghost: {
     id: 'ghost', name: 'GHOST', col: '#1DFFD0',
@@ -74,7 +76,7 @@ export function mkPlayer(W, H, char = CHARACTERS.ghost) {
   };
   ws[char.startWeapon] = mkWeaponState(1);
   return {
-    x: W / 2, y: H / 2, r: 13,
+    x: WORLD_W / 2, y: WORLD_H / 2, r: 13,
     hp: 100, maxHp: 100,
     hpLag: 100,
     spd: char.spd, dmg: 1,

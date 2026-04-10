@@ -1,6 +1,7 @@
 import { addBurst } from './particles.js';
 import { applyFreezeMeter } from './weapons.js';
 import { hasAscension } from './player.js';
+import { WORLD_H, WORLD_W } from './constants.js';
 
 export const enemies = [];
 let enemyIdCounter = 1;
@@ -29,13 +30,16 @@ function mkStatusState() {
   };
 }
 
-export function spawnEnemy(gt, W, H) {
+export function spawnEnemy(gt, W, H, camX, camY) {
   const side = Math.floor(Math.random() * 4);
   let x, y;
-  if (side === 0) { x = Math.random() * W; y = -28; }
-  else if (side === 1) { x = W + 28; y = Math.random() * H; }
-  else if (side === 2) { x = Math.random() * W; y = H + 28; }
-  else { x = -28; y = Math.random() * H; }
+  const pad = 50;
+  if (side === 0) { x = camX + Math.random() * W; y = camY - pad; }
+  else if (side === 1) { x = camX + W + pad; y = camY + Math.random() * H; }
+  else if (side === 2) { x = camX + Math.random() * W; y = camY + H + pad; }
+  else { x = camX - pad; y = camY + Math.random() * H; }
+  x = clamp(x, 0, WORLD_W);
+  y = clamp(y, 0, WORLD_H);
 
   const wave = Math.floor(gt / 45);
   const roll = Math.random();
@@ -58,8 +62,8 @@ export function spawnEnemy(gt, W, H) {
       id: enemyIdCounter++,
       ...base,
       type,
-      x: x + ox,
-      y,
+      x: clamp(x + ox, 0, WORLD_W),
+      y: clamp(y, 0, WORLD_H),
       maxHp,
       ...mkStatusState(),
       freezeThreshold: Math.ceil(maxHp / 40),
@@ -208,4 +212,8 @@ export function getExtraTarget() { return _extraTarget; }
 export function dist2(a, b) {
   const dx = a.x - b.x, dy = a.y - b.y;
   return dx * dx + dy * dy;
+}
+
+function clamp(v, min, max) {
+  return Math.max(min, Math.min(max, v));
 }

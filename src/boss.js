@@ -1,5 +1,6 @@
 import { dist2 } from './enemies.js';
 import { addRing, addBurst } from './particles.js';
+import { WORLD_H, WORLD_W } from './constants.js';
 
 export const BOSS_SPAWN_TIME = 120; // 2 minutes
 export const BOSS_RESPAWN_DELAY = 90;
@@ -58,14 +59,16 @@ const PHASE_TUNING = {
   },
 };
 
-export function mkBoss(gt, W, H) {
+export function mkBoss(gt, player, viewH, worldW = WORLD_W, worldH = WORLD_H) {
   const cycleScale = 1 + Math.floor(gt / 180) * 0.25;
   const baseHp = Math.round(BASE_HP * cycleScale);
   const hpScale = Math.max(1, gt / 120);
   const scaledHp = Math.round(baseHp * hpScale);
+  const margin = 34 + 8;
+  const spawnDist = viewH * 0.4;
   return {
-    x: W / 2,
-    y: -60,
+    x: clamp(player.x, margin, worldW - margin),
+    y: clamp(player.y - spawnDist, margin, worldH - margin),
     r: 34,
     baseHp,
     hp: scaledHp,
@@ -115,8 +118,8 @@ export function mkBoss(gt, W, H) {
     spdMult: 1,
     empMarkT: 0,
     alive: true,
-    arenaW: W,
-    arenaH: H,
+    arenaW: worldW,
+    arenaH: worldH,
   };
 }
 
