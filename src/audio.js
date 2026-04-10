@@ -226,6 +226,16 @@ export function playArcSound() {
   lfo.stop(t + 0.18);
 }
 
+export function playArcBladeSound() {
+  osc('triangle', 800, 0.14, 0.002, 0.1, 400);
+  noiseShot(0.035, 0.0015, 0.05, 'highpass', 2200);
+}
+
+export function playArcBladeReturnSound() {
+  osc('sine', 400, 0.06, 0.002, 0.08, 600);
+  noiseShot(0.018, 0.001, 0.03, 'bandpass', 900, 1.2);
+}
+
 export function playNovaDetonationSound() {
   const ctx = getAudioCtx();
   const t = n();

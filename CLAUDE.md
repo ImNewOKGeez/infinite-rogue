@@ -138,14 +138,14 @@ Broad by intent. The game should be readable for casual players and strategicall
 - Camera-centred world-space rendering across a fixed `3000 x 3000` arena, with the player moving through the world instead of staying inside screen bounds.
 - Capacitor is configured with a generated Android project, mobile viewport/safe-area handling, touch hardening, and placeholder native app assets.
 - Three playable characters: Ghost, Bruiser, Hacker.
-- Five total weapons in the pool, but only four weapon slots can be owned in a run.
+- Six total weapons in the pool, but only four weapon slots can be owned in a run.
 - Weapon upgrades currently run from level 1 to level 5.
 - Six run-wide passive upgrades.
 - XP gems with magnet pickup behavior and merge logic.
 - Heal orbs that restore 5% max HP and are globally throttled.
 - Surge events every 40 seconds outside boss flow.
 - Recurring three-phase boss with warning, intro, boss bar, phase announcements, and post-kill reward draft.
-- Boss-gated weapon Ascension draft for level-5 weapons, with Cryo, Pulse, EMP, and Swarm transformation pools currently live.
+- Boss-gated weapon Ascension draft for level-5 weapons, with Cryo, Pulse, EMP, Swarm, and ARC BLADE transformation pools currently live.
 - Death screen with run stats, equipped weapons, and run synergies.
 - Save-backed records screen with global and per-character bests.
 - Persistent synergy discovery tracking with first-discovery pause overlay.
@@ -175,7 +175,7 @@ Broad by intent. The game should be readable for casual players and strategicall
 ### Not built yet
 - Character unlock flow.
 - Additional characters beyond the current three.
-- Additional weapons beyond the current five.
+- Additional weapons beyond the current six.
 - A fuller codex/planning layer on top of records and discoveries.
 - Analytics or crash reporting.
 
@@ -218,6 +218,7 @@ The live weapon system is simple and numeric right now:
 | EMP | `#BF77FF` | Radial control / Ascension-led payoff | Expanding stun burst with larger radius and slightly longer stun each level; special payoff behavior now lives in Ascensions like Cascade Pulse, Triple Pulse, and Arc Discharge |
 | Swarm | `#1DFFD0` | Persistent seek damage | Orbiting drones that seek targets; levels mainly add more drones, with Ascensions for kill novas, frenzy chains, and split seekers |
 | Barrier | `#C6FF00` | Defensive sustain | Cycling absorb shield with recharge and heal refund based on absorbed damage |
+| ARC BLADE | `#FF2D9B` | Looping area sweep / positional coverage | Throws spinning neon boomerangs into tight elliptical loops that follow the player, circle back from the far side, and gain wider directional coverage as levels add opposite-side and 120-degree launches |
 
 ### Live per-weapon detail
 
@@ -274,6 +275,14 @@ The live weapon system is simple and numeric right now:
 - Level 4: absorb 130, active 8s, recharge 5s.
 - Level 5: absorb 175, active 10s, recharge 4s.
 - When the shield cycle ends or breaks, the player heals for absorbed damage up to missing HP.
+
+#### ARC BLADE
+- Level 1: one boomerang thrown toward the nearest enemy in a tight elliptical loop around the player using roughly `rx 55 / ry 35`.
+- Level 2: the loop grows to roughly `rx 65 / ry 42` while keeping the same single-disc forward launch.
+- Level 3: two boomerangs launch at once, one toward the nearest enemy and one directly behind the player, with loops around `rx 75 / ry 48`.
+- Level 4: the two-disc opposite-direction pattern remains, with tighter `rx 85 / ry 55` loops and piercing hits that can connect again on the back half of the oval.
+- Level 5: three boomerangs launch in a 120-degree spread, each following its own `rx 95 / ry 62` loop around the player.
+- Current implementation note: ARC BLADE now renders as an angular two-armed boomerang shape with a white neon edge, spins on its own axis in flight, uses position-history trails, and recalculates each ellipse centre from the player's current position every frame so the full loop moves with the player.
 
 ## Current passive upgrades
 | ID | Label | Live effect |
@@ -417,7 +426,7 @@ ios/           - generated Capacitor iOS project when created on a Mac; absent o
 src/
   main.js        - app entry, loads save and starts Game
   progression.js - save schema, records, synergy persistence
-  game.js        - core loop, menus, overlays, run flow, combat orchestration, world camera state, background/boundary rendering via `initBackground`, `updateBackground`, `drawBackground`, and `drawBoundaryWarning`, plus Pulse runtime helpers like `updateMines`, `drawMines`, `triggerMineExplosion`, `updateSlowFields`, `drawSlowFields`, and delayed Pulse explosions, EMP helpers `updateTripleWaves`, `drawTripleWaves`, `applyCascadePulse`, and `applyArcDischarge`, and Swarm helpers `handleNovaDroneKill`, `spawnSplitDrone`, `updateSplitDrones`, and `drawSplitDrones`
+  game.js        - core loop, menus, overlays, run flow, combat orchestration, world camera state, background/boundary rendering via `initBackground`, `updateBackground`, `drawBackground`, and `drawBoundaryWarning`, plus Pulse runtime helpers like `updateMines`, `drawMines`, `triggerMineExplosion`, `updateSlowFields`, `drawSlowFields`, and delayed Pulse explosions, EMP helpers `updateTripleWaves`, `drawTripleWaves`, `applyCascadePulse`, and `applyArcDischarge`, Swarm helpers `handleNovaDroneKill`, `spawnSplitDrone`, `updateSplitDrones`, and `drawSplitDrones`, and ARC BLADE loop helpers like `launchDisc`, `updateArcBlade`, `drawArcBlade`, `updatePhantoms`, `spawnPhantomBlade`, `spawnBladeStorm`, and `triggerRicochet`
   player.js      - character roster, player factory, weapon-state helpers, and per-run Pulse/Swarm Ascension tracking fields like `_pulseMines`, `_pulseOverloadCounter`, `_novaDrones`, and `_splitDrones`
   weapons.js     - weapon defs, bullets, ascension defs, cryo ascension hooks, pulse clusters, shield logic hooks
   enemies.js     - enemy roster, spawn logic, targeting and status helpers, freeze-state updates, and freeze spread
@@ -494,6 +503,8 @@ src/
 6. Refactor character passives from hardcoded `game.js` checks into a hook surface on the character definition object in `player.js`. This is required before the roster expands beyond three characters.
 
 ## Changelog
+- 2026-04-10: Tightened ARC BLADE again by replacing the circular spoke disc render with a spinning boomerang silhouette, shrinking its loop sizes substantially, and making each ellipse centre recalculate from the player's current position every frame so the weapon orbits with player movement.
+- 2026-04-10: Reworked ARC BLADE movement from a mirrored bezier throw into fixed world-space elliptical loops, switched its trail to position-history dots, and changed multi-disc launch directions so Tier 3 and Tier 4 cover front plus back while Tier 5 spreads discs evenly across 120-degree lanes.
 - 2026-04-10: Re-reviewed this brief against the latest live weapon/Ascension worktree, corrected the EMP roster summary so it no longer claims removed base-overload behavior, and clarified that `CLAUDE.md` is currently more accurate than a few stale inline Ascension descriptions in `weapons.js`.
 - 2026-04-10: Cut Swarm's Pulse Orbit Ascension and removed its runtime, state, audio, and particle cleanup paths.
 - 2026-04-10: Retuned Swarm again by making temporary Nova drones larger, brighter, pulsing, and easier to read, replacing Pulse Orbit's old phase-and-spoke model with a 5-second charge into rapid sequential outward drone streaks, and upgrading Split Swarm so split drones render as full mini-drones, prefer different targets, and expire after 3 seconds.

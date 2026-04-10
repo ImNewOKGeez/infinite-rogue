@@ -98,6 +98,23 @@ export const ASCENSIONS = {
       name: 'SPLIT SWARM',
       description: 'Each drone splits into two on first contact with an enemy. The split drone seeks a different target independently for 5 seconds then expires. Split drones cannot split again.',
     },
+  ],
+  arcblade: [
+    {
+      id: 'ricochet',
+      name: 'RICOCHET',
+      description: 'Discs bounce to the nearest enemy within 150px on hit, up to 3 bounces per throw. Bounces deal 70% damage.',
+    },
+    {
+      id: 'phantom_blade',
+      name: 'PHANTOM BLADE',
+      description: 'A ghost copy of the disc is left at the arc peak for 3 seconds. Enemies walking into it take damage.',
+    },
+    {
+      id: 'blade_storm',
+      name: 'BLADE STORM',
+      description: 'At the arc peak the disc splits into 3 copies that return via different paths, each dealing 60% damage.',
+    },
   ]
 };
 
@@ -597,6 +614,16 @@ export const WDEFS = {
       }
 
       p._miniDr = [];
+    }
+  },
+  arcblade: {
+    id: 'arcblade', name: "JAC'S BOOMERANG", icon: '◈', col: '#FF2D9B',
+    maxLvl: 5,
+    baseRate: 0,
+    getRate: () => 0,
+    fire() {},
+    tick(_p, _dt, _onHitEnemy, _helpers = {}) {
+      // ARC BLADE runtime is managed directly in game.js.
     }
   },
   barrier: {

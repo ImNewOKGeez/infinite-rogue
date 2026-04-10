@@ -1,5 +1,5 @@
 import { addWeapon, getOwnedWeaponIds, getWeaponLevel, upgradeWeaponLevel } from './player.js';
-import { ASCENSIONS, bullets } from './weapons.js';
+import { ASCENSIONS, bullets, WDEFS } from './weapons.js';
 
 export const PASSIVES = [
   { id: 'spd', label: 'SPRINT', apply: p => { const w = p.spd; p.spd = Math.round(p.spd * 1.22); return [`Speed: ${w} -> ${p.spd}`]; } },
@@ -12,10 +12,10 @@ export const PASSIVES = [
 
 export function buildPool(p) {
   const weps = [];
-  ['cryo', 'pulse', 'emp', 'swarm', 'barrier'].forEach(wid => {
+  const slots = getOwnedWeaponIds(p).length;
+  Object.keys(WDEFS).forEach(wid => {
     const lvl = getWeaponLevel(p, wid);
-    const slots = getOwnedWeaponIds(p).length;
-    const maxLvl = 5;
+    const maxLvl = WDEFS[wid]?.maxLvl || 5;
     if (lvl > 0 && lvl < maxLvl) weps.push({ id: 'wu_' + wid, type: 'wep', wid, lvl: lvl + 1 });
     else if (lvl === 0 && slots < 4) weps.push({ id: 'wn_' + wid, type: 'wep', wid, lvl: 1, isNew: true });
   });

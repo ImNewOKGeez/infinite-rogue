@@ -1,7 +1,7 @@
 import { initHUD, updateHUD, showOverlay, hideOverlay, setSurge, setBossBar, showDiscoveryOverlay, showRecordsScreen, showAscensionDraft } from './hud.js';
 import { initInput, initJoystick, jDir } from './input.js';
 import { CHARACTERS, addWeapon, getAscension, getOwnedWeaponIds, getWeaponLevel, hasAscension, mkPlayer } from './player.js';
-import { enemies, resetEnemies, spawnEnemy, pruneEnemies, dist2, setExtraTarget, clearExtraTarget, tickEnemyStatus, updateEnemyFreezeState } from './enemies.js';
+import { enemies, resetEnemies, spawnEnemy, pruneEnemies, dist2, nearest, setExtraTarget, clearExtraTarget, tickEnemyStatus, updateEnemyFreezeState } from './enemies.js';
 import { ASCENSIONS, EMP_SCALING, WDEFS, bullets, resetBullets, resetPulseClusters, handleCryoImpact, updateCryoFields, getPulseHitDamage, triggerPulseExplosion, spawnBullet, applyFreezeMeter, spawnPulseClusters } from './weapons.js';
 import { PASSIVES, buildPool, applyUpgrade, buildAscensionPool, applyAscension } from './upgrades.js';
 import { updateParticles, addRing, addBurst, addDot, addArc, drawParticles } from './particles.js';
@@ -12,6 +12,7 @@ import {
   initAudio, resumeAudio,
   playEMPSound,
   playCryoFire, playPulseFire, playCascadeSound, playTriplePulseSound, playArcSound,
+  playArcBladeSound, playArcBladeReturnSound,
   playNovaDetonationSound,
   playFrenzySound,
   playHit, playEnemyDeath, playPlayerHit, playDodge,
@@ -20,6 +21,14 @@ import {
   playBossWarning, playBossPhaseTwo, playBossDeath,
   startBossMusic, stopBossMusic,
 } from './audio.js';
+
+const ARC_BLADE_TIERS = {
+  1: { discCount: 1, rx: 55, ry: 35, thetaSpeed: 3.2, dmgMult: 1.0, pierce: false },
+  2: { discCount: 1, rx: 65, ry: 42, thetaSpeed: 3.2, dmgMult: 1.3, pierce: false },
+  3: { discCount: 2, rx: 75, ry: 48, thetaSpeed: 3.0, dmgMult: 1.3, pierce: false },
+  4: { discCount: 2, rx: 85, ry: 55, thetaSpeed: 2.8, dmgMult: 1.4, pierce: true },
+  5: { discCount: 3, rx: 95, ry: 62, thetaSpeed: 2.6, dmgMult: 1.5, pierce: true },
+};
 
 function traceEnemyShape(ctx, e) {
   ctx.beginPath();
@@ -176,6 +185,8 @@ export class Game {
     this.P = mkPlayer(this.W, this.H, char);
     this.P._pulseMines = [];
     this.P._pulseOverloadCounter = 0;
+    this.P._arcDiscs = [];
+    this.P._phantoms = [];
     this.P._novaDrones = [];
     this.P._splitDrones = [];
     this.P._dr = null;
@@ -349,6 +360,7 @@ export class Game {
     this._spawnEnemies(dt);
     this._updateBoss(dt);
     this._fireWeapons(dt);
+    if (getWeaponLevel(P, 'arcblade')) this.updateArcBlade(dt);
     this.updateTripleWaves(dt);
     this.updatePendingCascades(dt);
     this._updateBullets(dt);
@@ -592,6 +604,217 @@ export class Game {
       }
       return true;
     });
+  }
+
+  launchDisc(discIndex, throwAngle) {
+    const tier = ARC_BLADE_TIERS[getWeaponLevel(this.P, 'arcblade')];
+    if (!tier) return;
+
+    this.P._arcDiscs.push({
+      rx: tier.rx,
+      ry: tier.ry,
+      theta: Math.PI,
+      thetaSpeed: tier.thetaSpeed,
+      throwAngle,
+      rotation: 0,
+      dmg: this.P.dmg * tier.dmgMult * 15,
+      pierce: tier.pierce,
+      hitEnemies: new Set(),
+      bounceCount: 0,
+      discIndex,
+      _clearedForReturn: false,
+      isPhantom: false,
+      isSplit: false,
+      splitAngleOffset: 0,
+      x: this.P.x,
+      y: this.P.y,
+      trail: [],
+    });
+    playArcBladeSound();
+  }
+
+  updateArcBlade(dt) {
+    const P = this.P;
+    const tier = ARC_BLADE_TIERS[getWeaponLevel(P, 'arcblade')];
+    if (!tier) return;
+
+    const target = nearest(P);
+    const baseAngle = target
+      ? Math.atan2(target.y - P.y, target.x - P.x)
+      : 0;
+
+    for (let i = 0; i < tier.discCount; i++) {
+      const active = P._arcDiscs.filter(disc => disc.discIndex === i && !disc.isSplit);
+      if (active.length === 0) {
+        const throwAngle = getDiscAngle(i, tier.discCount, baseAngle);
+        this.launchDisc(i, throwAngle);
+      }
+    }
+
+    P._arcDiscs = P._arcDiscs.filter(disc => {
+      disc.theta += disc.thetaSpeed * dt;
+      disc.rotation += dt * 8;
+
+      disc.cx = this.P.x + Math.cos(disc.throwAngle) * disc.rx;
+      disc.cy = this.P.y + Math.sin(disc.throwAngle) * disc.rx;
+      const cosA = Math.cos(disc.throwAngle);
+      const sinA = Math.sin(disc.throwAngle);
+      const localX = Math.cos(disc.theta) * disc.rx;
+      const localY = Math.sin(disc.theta) * disc.ry;
+      disc.x = disc.cx + localX * cosA - localY * sinA;
+      disc.y = disc.cy + localX * sinA + localY * cosA;
+      disc.trail ||= [];
+      disc.trail.push({ x: disc.x, y: disc.y });
+      if (disc.trail.length > 6) disc.trail.shift();
+
+      if (!disc._passedPeak && disc.theta >= Math.PI * 2) {
+        disc._passedPeak = true;
+
+        if (disc.pierce && !disc._clearedForReturn) {
+          disc._clearedForReturn = true;
+          disc.hitEnemies.clear();
+        }
+
+        if (P.ascensions.arcblade === 'phantom_blade' && !disc.isSplit) {
+          this.spawnPhantomBlade?.(disc);
+        }
+
+        if (P.ascensions.arcblade === 'blade_storm' && !disc.isSplit) {
+          this.spawnBladeStorm?.(disc);
+          return false;
+        }
+      }
+
+      if (disc.theta >= Math.PI * 3) {
+        playArcBladeReturnSound();
+        return false;
+      }
+
+      let stopOnHit = false;
+      enemies.forEach(e => {
+        if (stopOnHit) return;
+        if (disc.hitEnemies.has(e)) return;
+        const d = Math.hypot(e.x - disc.x, e.y - disc.y);
+        if (d < e.r + 10) {
+          disc.hitEnemies.add(e);
+          this.hitEnemy(e, disc.dmg, '#FF2D9B');
+
+          if (P.ascensions.arcblade === 'ricochet' && disc.bounceCount < 3) {
+            this.triggerRicochet?.(disc, e);
+          }
+
+          if (!disc.pierce) stopOnHit = true;
+        }
+      });
+      pruneEnemies();
+
+      return !stopOnHit;
+    });
+
+    this.updatePhantoms?.(dt);
+  }
+
+  triggerRicochet(disc, hitEnemy) {
+    let nearestEnemy = null;
+    let nearestDist = Infinity;
+    enemies.forEach(e => {
+      if (disc.hitEnemies.has(e)) return;
+      if (e === hitEnemy) return;
+      const d = Math.hypot(e.x - disc.x, e.y - disc.y);
+      if (d < 150 && d < nearestDist) {
+        nearestDist = d;
+        nearestEnemy = e;
+      }
+    });
+    if (!nearestEnemy) return;
+
+    disc.bounceCount++;
+    this.hitEnemy(nearestEnemy, disc.dmg * 0.7, '#FF2D9B');
+    disc.hitEnemies.add(nearestEnemy);
+    addArc(disc.x, disc.y, nearestEnemy.x, nearestEnemy.y, 0.2, '#FF2D9B', {
+      glowColor: 'rgba(255, 45, 155, 0.28)',
+      glowWidth: 5,
+      lineWidth: 2,
+      shadowColor: '#FF2D9B',
+      shadowBlur: 10,
+    });
+    pruneEnemies();
+  }
+
+  spawnPhantomBlade(disc) {
+    const P = this.P;
+    if (P._phantoms.length >= 3) P._phantoms.shift();
+    P._phantoms.push({
+      x: disc.x,
+      y: disc.y,
+      life: 3.0,
+      maxLife: 3.0,
+      rotation: disc.rotation,
+      dmg: disc.dmg * 0.8,
+      hitCooldowns: new Map(),
+    });
+  }
+
+  updatePhantoms(dt) {
+    const P = this.P;
+    if (!P._phantoms?.length) return;
+    P._phantoms = P._phantoms.filter(ph => {
+      ph.life -= dt;
+      ph.rotation += dt * 6;
+      if (ph.life <= 0) return false;
+
+      enemies.forEach(e => {
+        const cd = ph.hitCooldowns.get(e) || 0;
+        if (cd > 0) {
+          ph.hitCooldowns.set(e, cd - dt);
+          return;
+        }
+        if (Math.hypot(e.x - ph.x, e.y - ph.y) < e.r + 12) {
+          this.hitEnemy(e, ph.dmg, '#FF2D9BCC');
+          ph.hitCooldowns.set(e, 0.5);
+        }
+      });
+      pruneEnemies();
+      return true;
+    });
+  }
+
+  spawnBladeStorm(disc) {
+    const P = this.P;
+    const splitAngles = [-0.4, 0, 0.4];
+
+    splitAngles.forEach((angleOffset, i) => {
+      const splitThrowAngle = disc.throwAngle + Math.PI + angleOffset;
+      const splitRx = Math.max(40, disc.rx * 0.55);
+      const splitRy = Math.max(22, disc.ry * 0.55);
+
+      P._arcDiscs.push({
+        cx: disc.x + Math.cos(splitThrowAngle) * splitRx,
+        cy: disc.y + Math.sin(splitThrowAngle) * splitRx,
+        rx: splitRx,
+        ry: splitRy,
+        theta: Math.PI,
+        thetaSpeed: disc.thetaSpeed * 1.15,
+        throwAngle: splitThrowAngle,
+        rotation: disc.rotation + i * 0.5,
+        dmg: disc.dmg * 0.6,
+        pierce: disc.pierce,
+        hitEnemies: new Set(),
+        bounceCount: 0,
+        discIndex: disc.discIndex,
+        _clearedForReturn: false,
+        _passedPeak: false,
+        isPhantom: false,
+        isSplit: true,
+        splitAngleOffset: angleOffset,
+        x: disc.x,
+        y: disc.y,
+        trail: [],
+      });
+    });
+
+    addBurst(disc.x, disc.y, '#FF2D9B', 10, 100, 3, 0.4);
+    addRing(disc.x, disc.y, 40, '#FF2D9B', 2, 0.3);
   }
 
   updatePendingExplosions(dt) {
@@ -1890,6 +2113,8 @@ export class Game {
 
     next.hp = next.maxHp;
     next.hpLag = next.maxHp;
+    next._arcDiscs = [];
+    next._phantoms = [];
     this.P = next;
     this.cryoFields = [];
     this.barrierHealFx = [];
@@ -2114,6 +2339,74 @@ export class Game {
       ctx.arc(f.x, f.y, f.r, 0, Math.PI * 2);
       ctx.stroke();
     });
+  }
+
+  drawArcBlade() {
+    const { ctx } = this;
+    const P = this.P;
+    if (!P.w?.arcblade && !getWeaponLevel(P, 'arcblade')) return;
+
+    const drawBoomerang = (x, y, rotation, alpha = 1, scale = 1) => {
+      ctx.save();
+      ctx.globalAlpha = alpha;
+      ctx.translate(x, y);
+      ctx.rotate(rotation);
+      ctx.scale(scale, scale);
+
+      ctx.strokeStyle = '#FF2D9B';
+      ctx.lineWidth = 4;
+      ctx.lineCap = 'round';
+      ctx.lineJoin = 'round';
+      ctx.shadowColor = '#FFFFFF';
+      ctx.shadowBlur = 12;
+
+      ctx.beginPath();
+      ctx.moveTo(-12, 0);
+      ctx.lineTo(0, 0);
+      ctx.lineTo(0, -12);
+      ctx.stroke();
+
+      ctx.strokeStyle = '#FFFFFF';
+      ctx.lineWidth = 1.5;
+      ctx.shadowBlur = 6;
+      ctx.beginPath();
+      ctx.moveTo(-12, 0);
+      ctx.lineTo(0, 0);
+      ctx.lineTo(0, -12);
+      ctx.stroke();
+
+      ctx.shadowBlur = 0;
+      ctx.restore();
+    };
+
+    P._arcDiscs.forEach(disc => {
+      if (disc.x === undefined) return;
+      disc.trail?.forEach((pos, i) => {
+        ctx.globalAlpha = (i / disc.trail.length) * 0.4;
+        ctx.fillStyle = '#FF2D9B';
+        ctx.beginPath();
+        ctx.arc(pos.x, pos.y, Math.max(2, 6 - i * 0.6), 0, Math.PI * 2);
+        ctx.fill();
+      });
+      ctx.globalAlpha = 1;
+      drawBoomerang(disc.x, disc.y, disc.rotation);
+    });
+
+    if (P._phantoms?.length) {
+      P._phantoms.forEach(ph => {
+        const alpha = (ph.life / ph.maxLife) * 0.65;
+        drawBoomerang(ph.x, ph.y, ph.rotation, alpha * 0.65, 0.85);
+        ctx.globalAlpha = alpha * 0.4;
+        ctx.strokeStyle = '#FF2D9B';
+        ctx.lineWidth = 1;
+        ctx.setLineDash([4, 4]);
+        ctx.beginPath();
+        ctx.arc(ph.x, ph.y, 18, 0, Math.PI * 2);
+        ctx.stroke();
+        ctx.setLineDash([]);
+        ctx.globalAlpha = 1;
+      });
+    }
   }
 
   drawEnemies(perfMode) {
@@ -2636,6 +2929,7 @@ export class Game {
     this.drawMines();
     this.drawHealOrbs();
     this.drawSlowFields();
+    this.drawArcBlade();
     drawBoss(ctx, this.boss);
     this.drawEnemies(perfMode);
     this.drawBullets(ultraMode);
@@ -3063,6 +3357,12 @@ function renderPlaytestLab(build, char, isRunActive, worldDebug) {
 }
 
 function cl(v, a, b) { return Math.max(a, Math.min(b, v)); }
+function getDiscAngle(discIndex, discCount, baseAngle) {
+  if (discCount === 1) return baseAngle;
+  if (discCount === 2) return discIndex === 0 ? baseAngle : baseAngle + Math.PI;
+  if (discCount === 3) return baseAngle + (discIndex / 3) * Math.PI * 2;
+  return baseAngle + (discIndex / discCount) * Math.PI * 2;
+}
 function pointToSegmentDistance(px, py, ax, ay, bx, by) {
   const abx = bx - ax;
   const aby = by - ay;
