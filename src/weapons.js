@@ -20,12 +20,12 @@ export const ASCENSIONS = {
     {
       id: 'cryo_nova',
       name: 'CRYO NOVA',
-      description: 'Frozen enemies that die explode in an ice nova, instantly freezing all enemies within 120px.',
+      description: 'Frozen enemies that die explode for 80% max-HP damage in a 150px ice nova and seed freeze buildup on survivors.',
     },
     {
       id: 'glacial_lance',
       name: 'GLACIAL LANCE',
-      description: 'Replaces spread projectiles with a single screen-wide piercing beam originating from the player. Lower fire rate, hits everything in the line.',
+      description: 'Every third Cryo fire is replaced by a piercing Glacial Lance. Level 5 releases a five-beam spread.',
     },
     {
       id: 'frost_field',
@@ -52,7 +52,7 @@ export const ASCENSIONS = {
     {
       id: 'overload_round',
       name: 'OVERLOAD ROUND',
-      description: 'Every 5th Pulse shot is an Overload Round - 5x damage, pierces all enemies, explosion radius doubled. Counter resets on death.',
+      description: 'Every 3rd Pulse shot is an Overload Round - 5x damage, pierces all enemies, explosion radius doubled. Counter resets on death.',
     },
     {
       id: 'proximity_mine',
@@ -258,9 +258,7 @@ export const WDEFS = {
     getRate: p => {
       const lvl = getWeaponLevel(p, 'cryo');
       const base = 1.9 + lvl * 0.35;
-      const ascension = getAscension(p, 'cryo');
-      const rate = base * (p.rateBonus || 1);
-      return ascension === 'glacial_lance' ? rate / 3 : rate;
+      return base * (p.rateBonus || 1);
     },
     fire(p) {
       const t = nearest(p); if (!t) return;
@@ -270,29 +268,12 @@ export const WDEFS = {
       if (ascension === 'frost_field') return;
       const dmg = getCryoDamage(lvl, p.dmg);
       if (ascension === 'glacial_lance') {
-        mkBullet(
-          p.x,
-          p.y,
-          Math.cos(a) * 620,
-          Math.sin(a) * 620,
-          10,
-          dmg * 0.75,
-          '#7BE9FF',
-          3.4,
-          {
-            type: 'cryo',
-            tier: lvl,
-            cryoLevel: lvl,
-            pierce: 999,
-            isLance: true,
-            lanceLength: 220,
-            freezeAmount: 0.9,
-            multiHit: true,
-            hitInterval: 0.12,
-            angle: a,
-          }
-        );
-        return;
+        p._lanceCounter = (p._lanceCounter || 0) + 1;
+        if (p._lanceCounter >= 3) {
+          p._lanceCounter = 0;
+          this.fireLance?.(p, t, lvl === 5 ? 5 : 1);
+          return { suppressDefaultSound: true };
+        }
       }
       const count = getCryoProjectileCount(lvl);
       const spreadStep = getCryoSpreadStep(lvl);
@@ -319,7 +300,8 @@ export const WDEFS = {
         helpers.enemies || enemies,
         dt,
         helpers.addParticle,
-        helpers.applyFreezeMeter || applyFreezeMeter
+        helpers.applyFreezeMeter || applyFreezeMeter,
+        helpers.onTickDamage
       );
     }
   },
@@ -607,8 +589,6 @@ export const WDEFS = {
         }
         processDrone(d, { isNova: true, allowPulseVisual: false });
       }
-
-      p._miniDr = [];
     }
   },
   arcblade: {
@@ -683,24 +663,30 @@ export function handleCryoImpact(game, bullet, target) {
   }
   const cryoLevel = bullet.meta?.cryoLevel || 1;
   target._freezeSourceLevel = cryoLevel;
-  applyFreezeMeter(target, bullet.meta?.freezeAmount || getCryoFreezeAmount(cryoLevel));
+  const freezeAmount = bullet.meta?.freeze
+    ? getEffectiveFreezeThreshold(target)
+    : (bullet.meta?.freezeAmount || getCryoFreezeAmount(cryoLevel));
+  applyFreezeMeter(target, freezeAmount);
 }
 
-export function tickCryoAscension(P, enemyList, dt, addParticle, applyFreezeMeterFn) {
+export function tickCryoAscension(P, enemyList, dt, addParticle, applyFreezeMeterFn, onTickDamage) {
   const ascension = getAscension(P, 'cryo');
   if (ascension !== 'frost_field') return;
 
-  P._frostFieldT = (P._frostFieldT || 0) + dt;
-  if (P._frostFieldT < 0.4) return;
-
-  P._frostFieldT = 0;
   enemyList.forEach(e => {
     if (!e || e.hp <= 0) return;
     const dx = e.x - P.x;
     const dy = e.y - P.y;
-    if (dx * dx + dy * dy > 150 * 150) return;
-    applyFreezeMeterFn(e, 1.5);
-    applySlow(e, 0.6, 0.4);
+    if (dx * dx + dy * dy > 150 * 150) {
+      e._frostFieldTime = 0;
+      return;
+    }
+    applySlow(e, 0.4, 0.4);
+    e._frostFieldTime = (e._frostFieldTime || 0) + dt;
+    onTickDamage?.(e, P.dmg * 5 * dt, '#00CFFF');
+    if (e._frostFieldTime >= 1.5) {
+      applyFreezeMeterFn(e, getEffectiveFreezeThreshold(e));
+    }
   });
   addParticle?.(P.x, P.y, 150, 'rgba(0, 207, 255, 0.22)', 1.5, 0.18);
 }

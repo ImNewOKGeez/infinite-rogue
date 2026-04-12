@@ -34,10 +34,6 @@ export function getWeaponLevel(p, wid) {
   return getWeaponState(p, wid)?.lvl || 0;
 }
 
-export function hasWeapon(p, wid) {
-  return getWeaponLevel(p, wid) > 0;
-}
-
 export function hasAscension(p, weaponId, ascensionId) {
   return p.ascensions?.[weaponId] === ascensionId;
 }
@@ -66,7 +62,7 @@ export function upgradeWeaponLevel(p, wid, nextLvl = null) {
   return state;
 }
 
-export function mkPlayer(W, H, char = CHARACTERS.ghost) {
+export function mkPlayer(_W, _H, char = CHARACTERS.ghost) {
   const ws = {
     cryo: mkWeaponState(),
     pulse: mkWeaponState(),
@@ -86,13 +82,13 @@ export function mkPlayer(W, H, char = CHARACTERS.ghost) {
     ws,
     ascensions: {},
     _arcDiscs: [],
-    _arcCurveDir: -1,
     _sawBlade: null,
+    _lanceCounter: 0,
     _pulseOverloadCounter: 0,
     _pulseMines: [],
     _novaDrones: [],
     _splitDrones: [],
-    ft: {}, _dr: null, _miniDr: [],
+    ft: {}, _dr: null,
     level: 1, xp: 0, xpNext: 14,
     invT: 0,
     hurtFlash: 0,

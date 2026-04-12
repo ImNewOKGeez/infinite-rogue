@@ -2,9 +2,6 @@ import { CHARACTERS, getOwnedWeaponIds, getWeaponLevel } from './player.js';
 import { getSave, SYNERGIES, isDiscovered } from './progression.js';
 import { WDEFS } from './weapons.js';
 
-const discoveryQueue = [];
-let discoveryActive = false;
-
 export function initHUD() {
   const app = document.getElementById('app');
   app.innerHTML = `
@@ -23,7 +20,6 @@ export function initHUD() {
       <div id="bossbar-label">◆ SIGNAL</div>
       <div id="bossbar-track"><div id="bossbar"></div></div>
     </div>
-    <div id="discovery-banner-root"></div>
     <canvas id="c"></canvas>
     <div id="wbar">
       <div class="ws" id="ws0"></div>
@@ -90,8 +86,13 @@ export function updateHUD(P, gt, WDEFS) {
       const ascended = !!P.ascensions?.[wids[i]];
       const isPulseOverload = wids[i] === 'pulse' && P.ascensions?.pulse === 'overload_round';
       const overloadCounter = isPulseOverload ? Math.max(0, Math.min(2, P._pulseOverloadCounter || 0)) : 0;
+      const isGlacialLance = wids[i] === 'cryo' && P.ascensions?.cryo === 'glacial_lance';
+      const lanceCounter = isGlacialLance ? Math.max(0, Math.min(2, P._lanceCounter || 0)) : 0;
       const overloadGlow = isPulseOverload && overloadCounter === 2
         ? 'box-shadow:0 0 0 1px rgba(255,182,39,0.9), 0 0 14px rgba(255,182,39,0.55), inset 0 0 14px rgba(255,182,39,0.18);'
+        : '';
+      const lanceGlow = isGlacialLance && lanceCounter === 2
+        ? 'box-shadow:0 0 0 1px rgba(0,207,255,0.95), 0 0 14px rgba(0,207,255,0.55), inset 0 0 14px rgba(0,207,255,0.18);'
         : '';
       const tierLabel = ascended
         ? '<span style="color:#00CFFF">ASC</span>'
@@ -104,9 +105,17 @@ export function updateHUD(P, gt, WDEFS) {
           }).join('')}
         </div>
       ` : '';
+      const lanceDots = isGlacialLance ? `
+        <div style="display:flex;justify-content:center;gap:6px;margin-top:5px;min-height:8px">
+          ${Array.from({ length: 3 }, (_, idx) => {
+            const filled = idx < lanceCounter;
+            return `<span style="width:8px;height:8px;border-radius:999px;display:block;background:${filled ? '#00CFFF' : '#00CFFF33'}"></span>`;
+          }).join('')}
+        </div>
+      ` : '';
       el.className = 'ws on';
-      el.style.cssText = overloadGlow;
-      el.innerHTML = `<div class="wi" style="color:${w.col}">${w.icon}</div><div class="wn" style="color:${w.col}">${w.name}</div><div class="wt">${tierLabel}</div>${overloadDots}`;
+      el.style.cssText = overloadGlow || lanceGlow;
+      el.innerHTML = `<div class="wi" style="color:${w.col}">${w.icon}</div><div class="wn" style="color:${w.col}">${w.name}</div><div class="wt">${tierLabel}</div>${overloadDots}${lanceDots}`;
     } else {
       el.className = 'ws';
       el.style.cssText = '';
@@ -147,49 +156,6 @@ export function setBossBar(boss) {
   const label = document.getElementById('bossbar-label');
   label.style.color = col;
   label.textContent = boss.phase === 3 ? '◆ SIGNAL // OVERCLOCK' : boss.phase === 2 ? '◆ SIGNAL // ENRAGED' : '◆ SIGNAL';
-}
-
-export function showDiscoveryBanner(synergy) {
-  if (!synergy) return;
-  discoveryQueue.push(synergy);
-  if (!discoveryActive) drainDiscoveryQueue();
-}
-
-function drainDiscoveryQueue() {
-  const synergy = discoveryQueue.shift();
-  if (!synergy) {
-    discoveryActive = false;
-    return;
-  }
-
-  discoveryActive = true;
-  const root = document.getElementById('discovery-banner-root');
-  if (!root) {
-    discoveryActive = false;
-    return;
-  }
-
-  const splitIndex = Math.ceil(synergy.label.length / 2);
-  const banner = document.createElement('div');
-  banner.className = 'discovery-banner';
-  banner.innerHTML = `
-    <div class="discovery-kicker">// SYNERGY UNLOCKED //</div>
-    <div class="discovery-label">
-      <span style="color:${synergy.colours[0]}">${synergy.label.slice(0, splitIndex)}</span><span style="color:${synergy.colours[1]}">${synergy.label.slice(splitIndex)}</span>
-    </div>
-    <div class="discovery-desc">${synergy.description}</div>`;
-  root.appendChild(banner);
-
-  requestAnimationFrame(() => banner.classList.add('show'));
-
-  window.setTimeout(() => {
-    banner.classList.add('hide');
-    window.setTimeout(() => {
-      banner.remove();
-      discoveryActive = false;
-      drainDiscoveryQueue();
-    }, 400);
-  }, 2300);
 }
 
 export function showDiscoveryOverlay(synergy, onContinue) {

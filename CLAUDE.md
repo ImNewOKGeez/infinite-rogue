@@ -21,7 +21,7 @@ Infinite Rogue is a mobile-first cyberpunk survivor roguelite inspired by Magic 
 ## Session startup checklist
 - What is the game? Mobile-first endless survivor roguelite with auto-attacks, aggressive wave pressure, weapon drafting, and score-by-survival-time.
 - What matters most? Discovery, fast starts, readable combat, distinct weapon identities, and future expandability.
-- What is in code today? Three playable characters, six weapons, four weapon slots per run, six generic passives, a scrolling world camera, surge events, a three-phase recurring boss, heal-orb sustain, records, persistent synergy discovery tracking, menu/death/records overlays, a playtest lab, joystick input, procedural audio, and Capacitor Android packaging.
+- What is in code today? Three playable characters, six weapons, four weapon slots per run, six generic passives, a scrolling world camera, surge events, a three-phase recurring boss, heal-orb sustain, records, persistent synergy discovery tracking, menu/death/records overlays, a playtest lab, joystick input, procedural audio, clean run-start resets, and Capacitor Android packaging.
 - What is not settled yet? Final weapon depth direction, freeze/boss tuning after the reactivated meter system, broader progression/codex shape, unlock flow, and long-term content scale.
 - What must not happen? No permanent stat grind, no tutorial-heavy hand-holding, and no architecture that makes new content expensive to add.
 
@@ -156,7 +156,7 @@ Broad by intent. The game should be readable for casual players and strategicall
 - Persistent synergy discovery tracking with first-discovery pause overlay.
 - Procedural audio for weapons, hits, XP, surges, boss warning/phases/death, and boss music.
 - Stronger damage feedback including screen flash, low-health vignette, HP lag bar, and barrier-heal HP bar segment.
-- Cryo freeze buildup is live with per-enemy freeze meters, thaw cooldowns, frost visuals, and thaw burst feedback.
+- Cryo freeze buildup is live with per-enemy freeze meters, thaw cooldowns, frost visuals, thaw burst feedback, upgraded Cryo Storm/Nova/Permafrost readability, Glacial Lance charge-and-release behavior, and Frost Field's slow-first aura with minimal chip damage.
 - Playtest lab overlay with instant weapon/passive tier editing, ascension selection, world/camera debug readouts, time skip controls, instant loadout injection, and one-click late-game/boss/max-weapon presets.
 - Capacitor configuration plus committed Android project are live in-repo.
 
@@ -225,6 +225,12 @@ The live weapon system is simple and numeric right now:
 - Level 4: four-projectile spread.
 - Level 5: five-projectile widest spread.
 - Current implementation note: Cryo slows on hit, builds a freeze meter by weapon level, freezes targets for 1.5s at threshold, and can spread partial freeze buildup from newly frozen targets.
+- `cryo_storm`: frozen hits reset the freeze timer, fire bright white-cyan shard bursts, and play a distinct crystalline trigger sound once per trigger frame.
+- `permafrost`: frozen enemies never thaw and now render with a simpler deeper-blue frozen body plus a single dark-blue ring for a cleaner read.
+- `cryo_nova`: frozen kills detonate for 80% of the dead enemy's max HP in a 150px radius, seed freeze buildup on survivors, and use a shortened white-plus-cyan ring pulse with a brief cyan screen flash.
+- `glacial_lance`: Cryo now counts shots toward the lance; every third Cryo fire is replaced by the lance, and level 5 releases a full five-beam lance spread on that third shot.
+- `frost_field`: nearby enemies are slowed immediately, freeze after 1.5s of continuous exposure, and take base damage at `P.dmg * 5` per second so the aura always contributes noticeable chip pressure.
+- `shatter`: frozen enemies can still shatter instantly, but no longer trigger any screen flash.
 - `ASCENSIONS.cryo` currently defines `cryo_storm`, `permafrost`, `cryo_nova`, `glacial_lance`, `frost_field`, and `shatter`.
 
 #### Pulse
@@ -234,6 +240,7 @@ The live weapon system is simple and numeric right now:
 - Level 4: cluster chain extends another generation.
 - Level 5: cluster chain extends to four total generations.
 - Frozen-target bonus damage logic is wired, but depends on freeze being active.
+- `overload_round`: every third Pulse shot becomes the overloaded shell; the HUD tracks the live 3-shot counter.
 
 #### EMP
 - EMP is now a clean scaling weapon with no baked-in per-level special rules.
@@ -367,6 +374,29 @@ The live weapon system is simple and numeric right now:
 - After a boss dies, the next boss is scheduled 90 seconds later.
 - Surges are cancelled or suppressed during boss intro and boss combat.
 - `Game` now also tracks `bossActive`, `surgeCount`, `_activeShields`, and `_bossShockwave` for surge-based roster progression, cached Leech shield lookups, and boss transition danger.
+- `Player` runtime state now also uses `_lanceCounter` for Glacial Lance's every-third-shot release cycle.
+
+## Current runtime state
+
+### Player runtime state
+- Core stats: `x`, `y`, `r`, `hp`, `maxHp`, `hpLag`, `spd`, `dmg`, `mag`, `dodge`, `rateBonus`
+- Weapon state: `ws`, `ft`, `ascensions`
+- Swarm state: `_dr`, `_novaDrones`, `_splitDrones`
+- Arc Blade state: `_arcDiscs`, `_sawBlade`
+- Cryo state: `_lanceCounter`
+- Pulse state: `_pulseOverloadCounter`, `_pulseMines`
+- Progression: `level`, `xp`, `xpNext`, `invT`
+- HUD / feedback state: `hurtFlash`, `barrierHealFrom`, `barrierHealTo`, `barrierHealT`, `barrierHealImpactT`
+- Character metadata: `char`, `col`
+
+### Game runtime state
+- Core entity arrays: `enemies`, `gems`, `healOrbs`, `bullets`, `particles`, `dmgNums`
+- Run clocks / pressure: `gt`, `killCount`, `surgeCount`, `surgeActive`, `surgeTimer`, `nextSurge`
+- Boss flow: `bossActive`, `boss`, `_bossShockwave`, `bossWarned`, `bossIntro`, `bossIntroT`, `nextBossTime`
+- Weapon / enemy helpers: `tripleWaves`, `pendingCascades`, `slowFields`, `pendingExplosions`, `_activeShields`
+- Camera / background: `camX`, `camY`, `bgNodes`, `bgConnections`, `bgPackets`
+- Player-owned runtime resets on `newRun()`: `P._arcDiscs`, `P._sawBlade`, `P._pulseMines`, `P._pulseOverloadCounter`, `P._lanceCounter`, `P._novaDrones`, `P._splitDrones`, `P._dr`
+- Feedback / overlays: `shake`, `runDiscoveries`, `runNewDiscoveries`, `discoveryPauseQueue`, `discoveryPauseActive`, `shatterBursts`, `overloadFlash`, `chainFlash`, `novaFlashT`, `novaImpactFlashes`, `_screenFlash`, `_cryoStormSoundPlayedThisFrame`
 
 ### Live behavior
 - Boss is a large signal construct with aimed volleys, radial rings, contact damage, and escalating movement pressure.
@@ -430,7 +460,7 @@ src/
   enemies.js     - enemy roster, surge-based spawn logic, targeting/status helpers, freeze-state updates, and freeze spread
   upgrades.js    - passive defs, upgrade pool generation, Ascension card injection, `applyUpgrade`, and `applyAscension`
   boss.js        - boss creation, update logic, rendering, phase behavior
-  particles.js   - particles and combat feedback primitives
+  particles.js   - particles and combat feedback primitives, including run-start resets
   hud.js         - HUD DOM creation, overlay helpers, and temporary warning banners
   input.js       - keyboard and virtual joystick
   audio.js       - procedural SFX and boss music helpers
@@ -492,6 +522,9 @@ src/
 5. Keep moving gameplay systems toward easier future content addition.
 
 ## Changelog
+- 2026-04-12: Completed an audit-and-cleanup reconciliation pass with no gameplay changes: removed dead helper exports and stale debug logging, added an explicit particle reset on `newRun()`, aligned live Ascension text with implementation, cleaned unused asset/temp files, and updated this brief to match the current runtime state and file map.
+- 2026-04-12: Simplified Permafrost visuals down to a darker blue frozen body plus one clean ring, shortened Cryo Nova's white/cyan pulse rings, changed Glacial Lance from a 6-second timer to an every-third-shot counter with a 5-beam level-5 release and HUD dots, raised Frost Field chip damage to `P.dmg * 5` per second while confirming dashed-line resets, and removed Shatter screen flash entirely.
+- 2026-04-12: Upgraded Cryo Ascensions by brightening Cryo Storm shards plus trigger audio, making Permafrost enemies much louder visually, buffing Cryo Nova into a high-damage 150px detonation that seeds more freeze, redesigning Glacial Lance into a 6-second charged piercing shot while preserving normal Cryo fire, fixing Frost Field to slow first and freeze after sustained exposure while adding minimal chip damage, and capping Shatter flash cadence for readability.
 - 2026-04-12: Expanded the playtest lab with dev-only Time Skip and Instant Loadout panels, added late-game/boss/max-weapon presets, and documented the new lab controls here.
 - 2026-04-12: Softened the latest difficulty spike by restoring player damage i-frames to 0.6s, delaying and flattening the late-game damage multiplier, slowing post-2-minute wave growth, reducing the shared enemy damage bump from 25% to 15%, and restoring the lighter surge density floor and batch ramp.
 - 2026-04-12: Moved surge-count progression to the end of each surge so new enemy types first appear in the calm window after their introduction surge, upgraded Juggernaut readability with a larger frame plus permanent orange crackle aura and louder IMMUNE feedback, and simplified Shield Leech performance with nearest-enemy movement, a cap of 2 active Leeches, and a precomputed `_activeShields` cache.

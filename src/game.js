@@ -4,14 +4,14 @@ import { CHARACTERS, addWeapon, getAscension, getOwnedWeaponIds, getWeaponLevel,
 import { enemies, resetEnemies, spawnEnemy, pruneEnemies, dist2, nearest, setExtraTarget, clearExtraTarget, tickEnemyStatus, updateEnemyFreezeState, applyStun, applySlow, applyKnockback, getEffectiveFreezeThreshold } from './enemies.js';
 import { ASCENSIONS, EMP_SCALING, WDEFS, bullets, resetBullets, resetPulseClusters, handleCryoImpact, updateCryoFields, getPulseHitDamage, triggerPulseExplosion, spawnBullet, applyFreezeMeter, spawnPulseClusters } from './weapons.js';
 import { PASSIVES, buildPool, applyUpgrade, applyAscension } from './upgrades.js';
-import { updateParticles, addRing, addBurst, addDot, addArc, drawParticles } from './particles.js';
+import { resetParticles, updateParticles, addRing, addBurst, addDot, addArc, drawParticles } from './particles.js';
 import { mkBoss, updateBoss, drawBoss, hitBoss, BOSS_SPAWN_TIME, BOSS_RESPAWN_DELAY } from './boss.js';
 import { SYNERGIES, recordDiscovery, recordRun } from './progression.js';
 import { WORLD_BOUNDARY_WARN, WORLD_H, WORLD_W } from './constants.js';
 import {
   initAudio, resumeAudio,
   playEMPSound,
-  playCryoFire, playPulseFire, playCascadeSound, playTriplePulseSound, playArcSound,
+  playCryoFire, playCryoStormSound, playGlacialLanceSound, playPulseFire, playCascadeSound, playTriplePulseSound, playArcSound,
   playArcBladeSound, playArcBladeReturnSound,
   playNovaDetonationSound,
   playFrenzySound,
@@ -67,6 +67,18 @@ function traceEnemyShape(ctx, e) {
   }
 }
 
+function hexToRgba(hex, alpha = 1) {
+  const normalized = String(hex || '').replace('#', '');
+  const full = normalized.length === 3
+    ? normalized.split('').map(ch => ch + ch).join('')
+    : normalized;
+  if (full.length !== 6) return `rgba(255,68,68,${alpha})`;
+  const r = parseInt(full.slice(0, 2), 16);
+  const g = parseInt(full.slice(2, 4), 16);
+  const b = parseInt(full.slice(4, 6), 16);
+  return `rgba(${r},${g},${b},${alpha})`;
+}
+
 export class Game {
   constructor() {
     this.P = null;
@@ -105,7 +117,6 @@ export class Game {
     this.runNewDiscoveries = new Set();
     this.discoveryPauseQueue = [];
     this.discoveryPauseActive = false;
-    this.shatterFlashT = 0;
     this.shatterBursts = [];
     this.playtestMode = false;
     this.playtestBuild = null;
@@ -126,6 +137,7 @@ export class Game {
     this.novaImpactFlashes = [];
     this._bossShockwave = null;
     this._screenFlash = null;
+    this._cryoStormSoundPlayedThisFrame = false;
   }
 
   start() {
@@ -177,6 +189,7 @@ export class Game {
     resetEnemies();
     resetBullets();
     resetPulseClusters();
+    resetParticles();
     this.gems = [];
     this.healOrbs = [];
     this.healOrbDropCooldown = 0;
@@ -206,7 +219,6 @@ export class Game {
     this.runNewDiscoveries = new Set();
     this.discoveryPauseQueue = [];
     this.discoveryPauseActive = false;
-    this.shatterFlashT = 0;
     this.shatterBursts = [];
     this.pendingExplosions = [];
     this.pendingCascades = [];
@@ -219,6 +231,7 @@ export class Game {
     this.novaImpactFlashes = [];
     this._bossShockwave = null;
     this._screenFlash = null;
+    this._cryoStormSoundPlayedThisFrame = false;
     this.P = mkPlayer(this.W, this.H, char);
     this.P._pulseMines = [];
     this.P._pulseOverloadCounter = 0;
@@ -227,7 +240,7 @@ export class Game {
     this.P._novaDrones = [];
     this.P._splitDrones = [];
     this.P._dr = null;
-    this.P._miniDr = [];
+    this.P._lanceCounter = 0;
     this.camX = 0;
     this.camY = 0;
     this.initBackground();
@@ -354,6 +367,7 @@ export class Game {
 
   update(dt) {
     const { P, W, H } = this;
+    this._cryoStormSoundPlayedThisFrame = false;
     this.updateCamera();
     const sh = this.shake;
     sh.t = Math.max(0, sh.t - dt);
@@ -377,7 +391,6 @@ export class Game {
       fx.life -= dt;
       return fx.life > 0;
     });
-    if (this.shatterFlashT > 0) this.shatterFlashT = Math.max(0, this.shatterFlashT - dt);
     if (this.overloadFlash > 0) this.overloadFlash = Math.max(0, this.overloadFlash - dt);
     if (this.chainFlash > 0) this.chainFlash = Math.max(0, this.chainFlash - dt);
     if (this.novaFlashT > 0) this.novaFlashT = Math.max(0, this.novaFlashT - dt);
@@ -1397,7 +1410,7 @@ export class Game {
         if (wid === 'emp' && (empAscension === 'cascade_pulse' || empAscension === 'arc_discharge')) {
           empPreStun = new Map(enemies.map(e => [e.id, !!e.stunned && (e.stunT || 0) > 0]));
         }
-        w.fire.call(this, P, onHit, {
+        const fireResult = w.fire.call(this, P, onHit, {
           addText: (...args) => this.addDN(...args),
           triggerSynergy: (id) => this.triggerSynergy(id),
         });
@@ -1418,7 +1431,7 @@ export class Game {
             this.applyArcDischarge(P.dmg * 5.4 * (EMP_SCALING[lvl]?.dmgMult || EMP_SCALING[1].dmgMult));
           }
         }
-        if (wid === 'cryo' && !hasAscension(P, 'cryo', 'frost_field')) playCryoFire();
+        if (wid === 'cryo' && !hasAscension(P, 'cryo', 'frost_field') && !fireResult?.suppressDefaultSound) playCryoFire();
         else if (wid === 'pulse') playPulseFire();
         else if (wid === 'emp' && empAscension !== 'triple_pulse') playEMPSound();
       }
@@ -1426,6 +1439,7 @@ export class Game {
         enemies,
         addParticle: (...args) => addRing(...args),
         applyFreezeMeter: (target, amount) => applyFreezeMeter(target, amount),
+        onTickDamage: (target, dmg, col) => this.hitEnemy(target, dmg, col, false, 0, true),
         triggerSynergy: (id) => this.triggerSynergy(id),
         onNovaDroneKill: (x, y, killedEnemy, options) => this.handleNovaDroneKill(x, y, killedEnemy, options),
         onNovaDroneExpire: (x, y) => this.handleNovaDroneExpire(x, y),
@@ -1447,6 +1461,10 @@ export class Game {
     this._spawnCryoStormShards(enemy.x, enemy.y);
     addBurst(enemy.x, enemy.y, '#B8F7FF', 8, 85, 2.6, 0.24);
     addRing(enemy.x, enemy.y, 24, '#00CFFF', 1.6, 0.18);
+    if (!this._cryoStormSoundPlayedThisFrame) {
+      playCryoStormSound();
+      this._cryoStormSoundPlayedThisFrame = true;
+    }
     return true;
   }
 
@@ -1458,9 +1476,9 @@ export class Game {
         y,
         Math.cos(angle) * 280,
         Math.sin(angle) * 280,
-        3,
+        4,
         this.P.dmg * 3,
-        '#8AF4FF',
+        '#AAFFFF',
         0.8,
         { type: 'cryo', tier: 5, cryoLevel: 1, pierce: 0, isCryoShard: true, freezeAmount: 0.8, angle }
       );
@@ -1476,7 +1494,6 @@ export class Game {
     enemy.hp = 0;
     enemy.shattered = true;
     this.addDN(enemy.x, enemy.y - enemy.r, 'SHATTER', '#FFFFFF', 0.85, true);
-    this.shatterFlashT = Math.max(this.shatterFlashT, 0.1);
     this._spawnShatterBurst(enemy.x, enemy.y);
     addRing(enemy.x, enemy.y, enemy.r + 16, '#FFFFFF', 2.4, 0.18);
     addBurst(enemy.x, enemy.y, '#DFF9FF', 10, 70, 2.6, 0.2);
@@ -1502,28 +1519,59 @@ export class Game {
   _triggerCryoNova(enemy) {
     if (!hasAscension(this.P, 'cryo', 'cryo_nova')) return;
 
-    addRing(enemy.x, enemy.y, 120, '#00CFFF', 3, 0.4);
-    addBurst(enemy.x, enemy.y, '#00CFFF', 16, 135, 4.2, 0.4);
-    addBurst(enemy.x, enemy.y, '#E9FDFF', 10, 90, 2.8, 0.24);
+    const novaRadius = 150;
+    const novaDamage = (enemy.maxHp || 0) * 0.8;
+    addRing(enemy.x, enemy.y, 80, '#FFFFFF', 2, 0.25);
+    addRing(enemy.x, enemy.y, novaRadius, '#00CFFF', 1.5, 0.3);
+    addBurst(enemy.x, enemy.y, '#AAFFFF', 20, 140, 3.5, 0.5);
+    this._screenFlash = { col: '#00CFFF', alpha: 0.08, life: 0.15, maxLife: 0.15 };
 
     enemies.forEach(target => {
-      if (target === enemy || target.hp <= 0 || target.frozen) return;
+      if (target === enemy || target.hp <= 0) return;
       const dx = target.x - enemy.x;
       const dy = target.y - enemy.y;
-      if (dx * dx + dy * dy > 120 * 120) return;
-      target.freezeCooldown = 0;
-      target.freezeMeter = getEffectiveFreezeThreshold(target);
+      if (dx * dx + dy * dy > novaRadius * novaRadius) return;
+      this.hitEnemy(target, novaDamage, '#00CFFF', true);
+      if (target.hp > 0) applyFreezeMeter(target, 2.0);
     });
+    playNovaDetonationSound();
   }
 
-  _getBulletEnemyCollisionRadius(b, e) {
-    if (!b.meta?.isLance) return b.r + e.r;
-    const angle = b.meta.angle || Math.atan2(b.vy, b.vx);
-    const length = b.meta.lanceLength || 170;
-    const tailX = b.x - Math.cos(angle) * length;
-    const tailY = b.y - Math.sin(angle) * length;
-    const dist = pointToSegmentDistance(e.x, e.y, tailX, tailY, b.x, b.y);
-    return dist;
+  fireLance(P, target, spreadCount = 1) {
+    if (!target) return;
+    const a = Math.atan2(target.y - P.y, target.x - P.x);
+    const cryoLevel = getWeaponLevel(P, 'cryo');
+    const lanceDmg = P.dmg * (8 + cryoLevel * 3) * 8;
+    const spread = spreadCount > 1 ? [-0.3, -0.15, 0, 0.15, 0.3] : [0];
+    spread.slice(0, spreadCount).forEach(offset => {
+      bullets.push({
+        x: P.x,
+        y: P.y,
+        vx: Math.cos(a + offset) * 500,
+        vy: Math.sin(a + offset) * 500,
+        r: 12,
+        dmg: lanceDmg,
+        col: '#FFFFFF',
+        life: 3.0,
+        pl: 999,
+        meta: {
+          type: 'cryo',
+          tier: cryoLevel,
+          cryoLevel,
+          isLance: true,
+          freeze: true,
+          slow: 0,
+          pierce: 999,
+          angle: a + offset,
+        },
+        trail: [],
+        hitIds: new Set(),
+      });
+    });
+
+    addRing(P.x, P.y, 40, '#FFFFFF', 3, 0.3);
+    addBurst(P.x, P.y, '#AAFFFF', 12, 100, 3, 0.4);
+    playGlacialLanceSound();
   }
 
   _canBulletHitTarget(b, targetId, dt) {
@@ -1543,6 +1591,11 @@ export class Game {
     for (let i = bullets.length - 1; i >= 0; i--) {
       const b = bullets[i];
       b.x += b.vx * dt; b.y += b.vy * dt; b.life -= dt;
+      if (b.meta?.isLance) {
+        b.trail ||= [];
+        b.trail.push({ x: b.x, y: b.y });
+        if (b.trail.length > 10) b.trail.shift();
+      }
       if (b.life < 0 || b.x < -80 || b.x > WORLD_W + 80 || b.y < -80 || b.y > WORLD_H + 80) { bullets.splice(i, 1); continue; }
 
       // enemy bullets hit player
@@ -1560,10 +1613,8 @@ export class Game {
       let alive = true;
 
       // hit boss
-      const bossLanceDist = this.boss?.alive ? this._getBulletEnemyCollisionRadius(b, this.boss) : Infinity;
       const hitBossByCircle = this.boss?.alive && dist2(b, this.boss) < (b.r + this.boss.r) ** 2;
-      const hitBossByLance = this.boss?.alive && b.meta?.isLance && bossLanceDist <= this.boss.r + b.r;
-      if (this.boss?.alive && this._canBulletHitTarget(b, 'boss', dt) && (hitBossByCircle || hitBossByLance)) {
+      if (this.boss?.alive && this._canBulletHitTarget(b, 'boss', dt) && hitBossByCircle) {
         let dmg = b.dmg;
         if (b.meta?.type === 'pulse') dmg = getPulseHitDamage(b, dmg);
         this._doBossHit(dmg, b.col, false);
@@ -1581,10 +1632,8 @@ export class Game {
           const e = enemies[j];
           if (!e) continue;
           if (!this._canBulletHitTarget(b, e.id, dt)) continue;
-          const lanceDist = this._getBulletEnemyCollisionRadius(b, e);
           const hitByCircle = dist2(b, e) < (b.r + e.r) ** 2;
-          const hitByLance = b.meta?.isLance && lanceDist <= e.r + b.r;
-          if (hitByCircle || hitByLance) {
+          if (hitByCircle) {
             const cryoStormBlocked = this._tryCryoStormHit(b, e);
             let dmg = b.dmg;
             if (b.meta?.type === 'pulse') dmg = getPulseHitDamage(b, dmg);
@@ -1608,6 +1657,7 @@ export class Game {
   _updateEnemies(dt) {
     const { P } = this;
     enemies.forEach(e => {
+      if (!e || e.hp <= 0) return;
       updateEnemyFreezeState(e, dt, P);
       tickEnemyStatus(e, dt);
       if (!e.stunned || (e.stunT || 0) <= 0) {
@@ -1681,6 +1731,7 @@ export class Game {
         this.hitPlayer(e.dmg, 0.28, 26);
       }
     });
+    pruneEnemies();
   }
 
   _updateGems(dt) {
@@ -1762,17 +1813,19 @@ export class Game {
     this.addDN(leech.x, leech.y - leech.r - 10, 'SHIELD BROKEN', '#44FF88', 1.1, true);
   }
 
-  hitEnemy(e, dmg, col, isSynergy = false, minHpFloor = null) {
+  hitEnemy(e, dmg, col, isSynergy = false, minHpFloor = null, silent = false) {
     if (this.P.char === 'bruiser' && this.P.hp < this.P.maxHp * 0.5) dmg *= 1.35;
     if (this._maybeApplyShatter(e)) dmg = 0;
 
     if (e.type === 'leech' && e.shieldActive) {
       e.shieldHp -= dmg;
       e.hitFlash = 0.1;
-      addBurst(e.x, e.y, e.shieldCol || '#44FF88', isSynergy ? 6 : 3, isSynergy ? 90 : 60, 2.5, 0.32);
-      if (dmg > 0) this.addDN(e.x, e.y - e.r, Math.round(dmg), e.shieldCol || '#44FF88', 0.7, isSynergy);
-      const now = performance.now();
-      if (now - this._lastHitSound > 80) { playHit(isSynergy); this._lastHitSound = now; }
+      if (!silent) addBurst(e.x, e.y, e.shieldCol || '#44FF88', isSynergy ? 6 : 3, isSynergy ? 90 : 60, 2.5, 0.32);
+      if (!silent && dmg > 0) this.addDN(e.x, e.y - e.r, Math.round(dmg), e.shieldCol || '#44FF88', 0.7, isSynergy);
+      if (!silent) {
+        const now = performance.now();
+        if (now - this._lastHitSound > 80) { playHit(isSynergy); this._lastHitSound = now; }
+      }
       if (e.shieldHp <= 0) this.popLeechShield(e);
       return { killed: false, target: e, damage: 0 };
     }
@@ -1785,19 +1838,24 @@ export class Game {
     }
 
     if (minHpFloor != null) {
-      const floor = Math.max(1, minHpFloor);
+      const floor = Math.max(0, minHpFloor);
       if (e.hp - dmg < floor) dmg = Math.max(0, e.hp - floor);
     }
-    e.hp -= dmg; e.hitFlash = 0.1;
+    e.hp -= dmg;
+    if (e.hp <= 0.001) e.hp = 0;
+    e.hitFlash = 0.1;
     const numCol = isSynergy ? '#FFB627' : col === '#00CFFF' ? '#00CFFF' : col === '#BF77FF' ? '#BF77FF' : '#fff';
-    if (dmg > 0) this.addDN(e.x, e.y - e.r, Math.round(dmg), numCol, 0.7, isSynergy);
-    addBurst(e.x, e.y, col, isSynergy ? 6 : 3, isSynergy ? 90 : 60, 2.5, 0.32);
-    const now = performance.now();
-    if (now - this._lastHitSound > 80) { playHit(isSynergy); this._lastHitSound = now; }
+    if (!silent && dmg > 0) this.addDN(e.x, e.y - e.r, Math.round(dmg), numCol, 0.7, isSynergy);
+    if (!silent) addBurst(e.x, e.y, col, isSynergy ? 6 : 3, isSynergy ? 90 : 60, 2.5, 0.32);
+    if (!silent) {
+      const now = performance.now();
+      if (now - this._lastHitSound > 80) { playHit(isSynergy); this._lastHitSound = now; }
+    }
     if (e.hp <= 0) {
       this.killCount++;
       const xpVal = (this.P.char === 'hacker' && e.stunned) ? e.xp * 2 : e.xp;
       if (e.frozen) this._triggerCryoNova(e);
+      e.permafrost = false;
       this._dropEnemyPickups(e, xpVal);
       this.spawnDeath(e.x, e.y, e.col, e.frozen, e.shattered);
       playEnemyDeath(e.frozen);
@@ -2226,6 +2284,7 @@ export class Game {
     next.hpLag = next.maxHp;
     next._arcDiscs = [];
     next._sawBlade = null;
+    next._lanceCounter = 0;
     this.P = next;
     this.cryoFields = [];
     this.barrierHealFx = [];
@@ -2338,7 +2397,6 @@ export class Game {
       clearExtraTarget();
     }
 
-    console.log(`[LAB] Time skipped to ${targetTime}s, surge count ${surgeOverride}`);
     updateHUD(this.P, this.gt, WDEFS);
     this.openPlaytestLab();
   }
@@ -2376,7 +2434,6 @@ export class Game {
     this.P.xp = 0;
     this.P.xpNext = getXpTargetForLevel(levelOverride);
 
-    console.log('[LAB] Loadout applied:', this.playtestBuild.weapons, 'level:', this.P.level, 'hp:', this.P.hp);
     updateHUD(this.P, this.gt, WDEFS);
     this.openPlaytestLab();
   }
@@ -2755,7 +2812,7 @@ export class Game {
       const baseCol = e.type === 'leech'
         ? (e.shieldActive ? (e.protectedCol || '#2A9B5A') : e.col)
         : e.col;
-      const col = e.hitFlash > 0 ? '#fff' : e.frozen ? '#00CFFF' : e.stunned ? '#BF77FF' : e.slowT > 0 ? '#7ecfef' : baseCol;
+      const col = e.hitFlash > 0 ? '#fff' : e.frozen ? (e.permafrost ? '#0044AA' : '#00CFFF') : e.stunned ? '#BF77FF' : e.slowT > 0 ? '#7ecfef' : baseCol;
       ctx.fillStyle = col + 'bb';
       ctx.strokeStyle = col;
       ctx.lineWidth = 1.5;
@@ -2794,43 +2851,38 @@ export class Game {
       }
 
       if (!perfMode && e.frozen) {
-        ctx.fillStyle = e.permafrost ? 'rgba(170, 240, 255, 0.78)' : 'rgba(0, 207, 255, 0.65)';
+        ctx.fillStyle = e.permafrost ? '#0044AA' : 'rgba(0, 207, 255, 0.65)';
         traceEnemyShape(ctx, e);
         ctx.fill();
-        ctx.strokeStyle = e.permafrost ? 'rgba(235, 253, 255, 0.95)' : 'rgba(0,207,255,0.85)';
-        ctx.lineWidth = e.permafrost ? 3.5 : 3;
+        ctx.strokeStyle = e.permafrost ? '#0066CC' : 'rgba(0,207,255,0.85)';
+        ctx.lineWidth = e.permafrost ? 2 : 3;
         ctx.beginPath();
-        ctx.arc(e.x, e.y, e.r + 3, 0, Math.PI * 2);
+        ctx.arc(e.x, e.y, e.r + (e.permafrost ? 4 : 3), 0, Math.PI * 2);
         ctx.stroke();
-        ctx.save();
-        ctx.strokeStyle = e.permafrost ? 'rgba(255,255,255,0.98)' : 'rgba(215, 248, 255, 0.95)';
-        ctx.lineWidth = e.permafrost ? 1.9 : 1.6;
-        for (let i = 0; i < 4; i++) {
-          const a = this.gt * 1.8 + e.id * 0.23 + (i / 4) * Math.PI * 2;
-          const innerR = e.r + 2;
-          const outerR = e.r + 8 + (i % 2) * 2;
-          ctx.beginPath();
-          ctx.moveTo(e.x + Math.cos(a) * innerR, e.y + Math.sin(a) * innerR);
-          ctx.lineTo(e.x + Math.cos(a) * outerR, e.y + Math.sin(a) * outerR);
-          ctx.stroke();
-        }
-        if (e.permafrost) {
-          ctx.strokeStyle = 'rgba(195, 245, 255, 0.95)';
+        if (!e.permafrost) {
+          ctx.save();
+          ctx.strokeStyle = 'rgba(215, 248, 255, 0.95)';
           ctx.lineWidth = 1.6;
-          for (let i = 0; i < 6; i++) {
-            const a = (i / 6) * Math.PI * 2;
-            const crystalR = e.r + 11 + ((i % 2) * 3);
-            const px = e.x + Math.cos(a) * crystalR;
-            const py = e.y + Math.sin(a) * crystalR;
+          for (let i = 0; i < 4; i++) {
+            const a = this.gt * 1.8 + e.id * 0.23 + (i / 4) * Math.PI * 2;
+            const innerR = e.r + 2;
+            const outerR = e.r + 8 + (i % 2) * 2;
             ctx.beginPath();
-            ctx.moveTo(px, py);
-            ctx.lineTo(px - Math.cos(a) * 8 + Math.cos(a + Math.PI / 2) * 4, py - Math.sin(a) * 8 + Math.sin(a + Math.PI / 2) * 4);
-            ctx.lineTo(px - Math.cos(a) * 8 - Math.cos(a + Math.PI / 2) * 4, py - Math.sin(a) * 8 - Math.sin(a + Math.PI / 2) * 4);
-            ctx.closePath();
+            ctx.moveTo(e.x + Math.cos(a) * innerR, e.y + Math.sin(a) * innerR);
+            ctx.lineTo(e.x + Math.cos(a) * outerR, e.y + Math.sin(a) * outerR);
             ctx.stroke();
           }
+          ctx.restore();
+        } else {
+          ctx.save();
+          ctx.globalAlpha = 0.7;
+          ctx.strokeStyle = '#0066CC';
+          ctx.lineWidth = 2;
+          ctx.beginPath();
+          ctx.arc(e.x, e.y, e.r + 4, 0, Math.PI * 2);
+          ctx.stroke();
+          ctx.restore();
         }
-        ctx.restore();
       }
 
       if (!perfMode && e.stunned) {
@@ -2923,34 +2975,29 @@ export class Game {
 
     bullets.filter(b => !b.enemy).forEach(b => {
       if (b.meta?.isLance) {
-        const angle = b.meta.angle || Math.atan2(b.vy, b.vx);
-        const length = b.meta.lanceLength || 220;
-        const tailX = b.x - Math.cos(angle) * length;
-        const tailY = b.y - Math.sin(angle) * length;
         ctx.save();
+        (b.trail || []).forEach((pos, i) => {
+          const ratio = b.trail.length ? i / b.trail.length : 0;
+          ctx.globalAlpha = ratio * 0.5;
+          ctx.fillStyle = '#AAFFFF';
+          ctx.beginPath();
+          ctx.arc(pos.x, pos.y, b.r * ratio, 0, Math.PI * 2);
+          ctx.fill();
+        });
+        ctx.globalAlpha = 1;
+        ctx.shadowColor = '#FFFFFF';
+        ctx.shadowBlur = 20;
+        ctx.fillStyle = '#FFFFFF';
+        ctx.beginPath();
+        ctx.arc(b.x, b.y, b.r, 0, Math.PI * 2);
+        ctx.fill();
         ctx.shadowColor = '#00CFFF';
-        ctx.shadowBlur = 18;
-        ctx.strokeStyle = 'rgba(0, 207, 255, 0.92)';
-        ctx.lineWidth = 6;
+        ctx.shadowBlur = 30;
+        ctx.fillStyle = '#00CFFF';
         ctx.beginPath();
-        ctx.moveTo(tailX, tailY);
-        ctx.lineTo(b.x, b.y);
-        ctx.stroke();
-        ctx.strokeStyle = 'rgba(185, 247, 255, 0.95)';
-        ctx.lineWidth = 2.6;
-        ctx.beginPath();
-        ctx.moveTo(tailX, tailY);
-        ctx.lineTo(b.x, b.y);
-        ctx.stroke();
-        ctx.strokeStyle = 'rgba(235, 253, 255, 0.8)';
-        ctx.lineWidth = 1;
-        ctx.setLineDash([14, 10]);
-        ctx.lineDashOffset = -this.gt * 30;
-        ctx.beginPath();
-        ctx.moveTo(tailX, tailY);
-        ctx.lineTo(b.x, b.y);
-        ctx.stroke();
-        ctx.setLineDash([]);
+        ctx.arc(b.x, b.y, b.r * 0.6, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.shadowBlur = 0;
         ctx.restore();
         return;
       }
@@ -2958,18 +3005,18 @@ export class Game {
       if (b.meta?.isCryoShard) {
         const angle = b.meta.angle || Math.atan2(b.vy, b.vx);
         ctx.save();
-        ctx.shadowColor = '#BDF7FF';
-        ctx.shadowBlur = 10;
-        ctx.strokeStyle = '#BDF7FF';
-        ctx.lineWidth = 1.5;
+        ctx.shadowColor = '#00CFFF';
+        ctx.shadowBlur = 8;
+        ctx.strokeStyle = '#AAFFFF';
+        ctx.lineWidth = Math.max(2, b.r * 0.5);
         ctx.beginPath();
-        ctx.moveTo(b.x - Math.cos(angle) * 6, b.y - Math.sin(angle) * 6);
-        ctx.lineTo(b.x + Math.cos(angle) * 4, b.y + Math.sin(angle) * 4);
+        ctx.moveTo(b.x - Math.cos(angle) * (b.r + 3), b.y - Math.sin(angle) * (b.r + 3));
+        ctx.lineTo(b.x + Math.cos(angle) * b.r, b.y + Math.sin(angle) * b.r);
         ctx.stroke();
         ctx.strokeStyle = 'rgba(255,255,255,0.9)';
         ctx.beginPath();
-        ctx.moveTo(b.x - Math.cos(angle + Math.PI / 2) * 3, b.y - Math.sin(angle + Math.PI / 2) * 3);
-        ctx.lineTo(b.x + Math.cos(angle + Math.PI / 2) * 3, b.y + Math.sin(angle + Math.PI / 2) * 3);
+        ctx.moveTo(b.x - Math.cos(angle + Math.PI / 2) * (b.r - 1), b.y - Math.sin(angle + Math.PI / 2) * (b.r - 1));
+        ctx.lineTo(b.x + Math.cos(angle + Math.PI / 2) * (b.r - 1), b.y + Math.sin(angle + Math.PI / 2) * (b.r - 1));
         ctx.stroke();
         ctx.restore();
         return;
@@ -3085,17 +3132,6 @@ export class Game {
       ctx.fillText('N', x, y - 16);
       ctx.shadowBlur = 0;
     });
-    (P._miniDr || []).forEach(drone => {
-      drawDrone(drone, {
-        radius: 4,
-        fill: '#d7fff3',
-        stroke: '#FFB627',
-        shadowBlur: 10,
-        lineWidth: 1.4,
-        outerRing: true,
-      });
-    });
-
     const fl = P.invT > 0 && Math.floor(P.invT * 12) % 2 === 0;
     ctx.shadowColor = fl ? '#fff' : P.col;
     ctx.shadowBlur = 14;
@@ -3249,11 +3285,6 @@ export class Game {
       ctx.shadowBlur = 0;
     }
 
-    if (this.shatterFlashT > 0) {
-      ctx.fillStyle = `rgba(255,255,255,${0.1 * Math.min(1, this.shatterFlashT / 0.1)})`;
-      ctx.fillRect(0, 0, W, H);
-    }
-
     if (this.overloadFlash > 0) {
       ctx.fillStyle = `rgba(255,182,39,${0.15 * Math.min(1, this.overloadFlash / 0.15)})`;
       ctx.fillRect(0, 0, W, H);
@@ -3270,8 +3301,9 @@ export class Game {
     }
 
     if (this._screenFlash) {
-      const alpha = this._screenFlash.alpha * Math.max(0, this._screenFlash.life / 0.3);
-      ctx.fillStyle = `rgba(255,68,68,${alpha})`;
+      const flashLife = this._screenFlash.maxLife || 0.3;
+      const alpha = this._screenFlash.alpha * Math.max(0, this._screenFlash.life / flashLife);
+      ctx.fillStyle = hexToRgba(this._screenFlash.col || '#FF4444', alpha);
       ctx.fillRect(0, 0, W, H);
     }
 

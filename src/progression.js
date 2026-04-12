@@ -158,7 +158,3 @@ export function recordDiscovery(synergyId) {
   writeSave(save);
   return true;
 }
-
-export function getAllDiscoveries() {
-  return [...getSave().discoveries.synergyIds];
-}

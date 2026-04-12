@@ -131,6 +131,16 @@ export function playCryoFire() {
   osc('sine', 900, 0.06, 0.003, 0.09, 340);
 }
 
+export function playCryoStormSound() {
+  osc('triangle', 1200, 0.045, 0.01, 0.15, 850);
+  osc('sine', 1600, 0.03, 0.01, 0.15, 1100);
+}
+
+export function playGlacialLanceSound() {
+  osc('sine', 80, 0.14, 0.01, 0.4, 60);
+  osc('sawtooth', 2000, 0.075, 0.01, 0.3, 400);
+}
+
 export function playPulseFire() {
   // sharp energy crack — the "pulse" character
   noiseShot(0.38, 0.002, 0.045, 'bandpass', 2200, 5);

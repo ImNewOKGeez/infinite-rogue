@@ -66,13 +66,13 @@ export function applyUpgrade(id, p) {
   if (id.startsWith('wu_')) {
     const wid = id.slice(3);
     upgradeWeaponLevel(p, wid);
-    if (wid === 'swarm') { p._dr = null; p._miniDr = []; }
+    if (wid === 'swarm') p._dr = null;
     return;
   }
   if (id.startsWith('wn_')) {
     const wid = id.slice(3);
     addWeapon(p, wid, 1);
-    if (wid === 'swarm') { p._dr = null; p._miniDr = []; }
+    if (wid === 'swarm') p._dr = null;
     return;
   }
   if (id.startsWith('p_')) {
@@ -82,41 +82,12 @@ export function applyUpgrade(id, p) {
   }
 }
 
-export function buildAscensionPool(p) {
-  const eligibleWeapons = getOwnedWeaponIds(p)
-    .filter(wid => getWeaponLevel(p, wid) >= 5 && !p.ascensions?.[wid] && ASCENSIONS[wid]?.length);
-
-  if (!eligibleWeapons.length) return null;
-
-  let bestLevel = -Infinity;
-  let tied = [];
-  eligibleWeapons.forEach(wid => {
-    const lvl = getWeaponLevel(p, wid);
-    if (lvl > bestLevel) {
-      bestLevel = lvl;
-      tied = [wid];
-    } else if (lvl === bestLevel) {
-      tied.push(wid);
-    }
-  });
-
-  const weaponId = tied[Math.floor(Math.random() * tied.length)];
-  const pool = [...ASCENSIONS[weaponId]];
-  const options = [];
-  while (pool.length && options.length < Math.min(3, ASCENSIONS[weaponId].length)) {
-    options.push(pickRandom(pool));
-  }
-
-  return { weaponId, options };
-}
-
 export function applyAscension(p, weaponId, ascensionId) {
   if (!p.ascensions) p.ascensions = {};
   p.ascensions[weaponId] = ascensionId;
 
   if (weaponId === 'cryo') {
     p.ft.cryo = 0;
-    p._frostFieldT = 0;
     for (let i = bullets.length - 1; i >= 0; i--) {
       if (bullets[i].meta?.type === 'cryo') bullets.splice(i, 1);
     }

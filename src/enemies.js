@@ -236,25 +236,6 @@ export function ensureFreezeState(target) {
   return target;
 }
 
-export function applyFreezeBuildup(target, buildup, freezeDuration) {
-  ensureFreezeState(target);
-  const effectiveThreshold = getEffectiveFreezeThreshold(target);
-  if (target.frozen) {
-    target.frozenTimer = Math.max(target.frozenTimer || 0, freezeDuration * 0.25);
-    return { froze: false, meter: target.freezeMeter };
-  }
-  if (target.freezeCooldown > 0 || target.freezeImmune) return { froze: false, meter: target.freezeMeter };
-  target.freezeMeter = Math.min(effectiveThreshold, target.freezeMeter + buildup);
-  if (target.freezeMeter >= effectiveThreshold) {
-    target.frozen = true;
-    target.frozenTimer = Math.max(target.frozenTimer || 0, freezeDuration);
-    target.slowT = 0;
-    target.freezeMeter = 0;
-    return { froze: true, meter: 0 };
-  }
-  return { froze: false, meter: target.freezeMeter };
-}
-
 function getFrostLevel(e) {
   const threshold = getEffectiveFreezeThreshold(e);
   const fillPct = (e.freezeMeter / threshold) * 100;

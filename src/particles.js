@@ -1,6 +1,10 @@
 export let particles = [];
 const MAX_PARTICLES = 900;
 
+export function resetParticles() {
+  particles = [];
+}
+
 export function updateParticles(dt) {
   particles = particles.filter(p => {
     p.life -= dt;
