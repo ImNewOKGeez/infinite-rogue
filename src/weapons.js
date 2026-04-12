@@ -101,19 +101,9 @@ export const ASCENSIONS = {
   ],
   arcblade: [
     {
-      id: 'ricochet',
-      name: 'RICOCHET',
-      description: 'Discs bounce to the nearest enemy within 150px on hit, up to 3 bounces per throw. Bounces deal 70% damage.',
-    },
-    {
-      id: 'phantom_blade',
-      name: 'PHANTOM BLADE',
-      description: 'A ghost copy of the disc is left at the arc peak for 3 seconds. Enemies walking into it take damage.',
-    },
-    {
-      id: 'blade_storm',
-      name: 'BLADE STORM',
-      description: 'At the arc peak the disc splits into 3 copies that return via different paths, each dealing 60% damage.',
+      id: 'saw_blade',
+      name: 'SAW BLADE',
+      description: 'All boomerangs merge into a single large orbital saw. Continuously damages all enemies within its radius.',
     },
   ]
 };

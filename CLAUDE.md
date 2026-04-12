@@ -5,7 +5,13 @@
 - When a design decision is made, a feature ships, or something here becomes outdated, update this file in the same session if possible.
 - Do not delete historical context. Move outdated guidance to `## Changelog` with a short note.
 - If a requested change conflicts with this document in a meaningful way, pause and flag it before overwriting the rule.
-- If you notice architectural debt, dead code, or discrepancies between this document and the live codebase, flag them explicitly in your response rather than silently working around them. Do not fix architectural issues without explicit instruction — document them and continue.
+- If at any point the user is required to do any of the following please inform them at the end of your message.
+EVERY UPDATE:
+1. npm run build
+2. Drag dist/ → Netlify
+3. npx cap sync
+4. Play in Android Studio
+5. commit git
 
 # Infinite Rogue - Project Operating Brief
 
@@ -15,8 +21,8 @@ Infinite Rogue is a mobile-first cyberpunk survivor roguelite inspired by Magic 
 ## Session startup checklist
 - What is the game? Mobile-first endless survivor roguelite with auto-attacks, aggressive wave pressure, weapon drafting, and score-by-survival-time.
 - What matters most? Discovery, fast starts, readable combat, distinct weapon identities, and future expandability.
-- What is in code today? Three playable characters, five weapons, four weapon slots per run, six generic passives, surge events, a three-phase recurring boss, heal-orb sustain, records, persistent synergy discovery tracking, menu/death/records overlays, a playtest lab overlay, joystick input, and procedural audio.
-- What is not settled yet? Final weapon depth direction, freeze/boss tuning after the reactivated meter system, broader progression/codex shape, unlock flow, whether the playtest lab remains dev-only, and long-term content scale.
+- What is in code today? Three playable characters, six weapons, four weapon slots per run, six generic passives, a scrolling world camera, surge events, a three-phase recurring boss, heal-orb sustain, records, persistent synergy discovery tracking, menu/death/records overlays, a playtest lab, joystick input, procedural audio, and Capacitor Android packaging.
+- What is not settled yet? Final weapon depth direction, freeze/boss tuning after the reactivated meter system, broader progression/codex shape, unlock flow, and long-term content scale.
 - What must not happen? No permanent stat grind, no tutorial-heavy hand-holding, and no architecture that makes new content expensive to add.
 
 ## Product vision
@@ -133,10 +139,8 @@ Broad by intent. The game should be readable for casual players and strategicall
 
 ### Built now
 - Main menu overlay with character selection, records access, and active-loadout presentation.
-- Playtest lab overlay with instant weapon/passive/ascension editing, optional in-run reopening, and lab-specific restart/refill actions.
 - Canvas-based core gameplay loop with keyboard plus virtual joystick support.
-- Camera-centred world-space rendering across a fixed `3000 x 3000` arena, with the player moving through the world instead of staying inside screen bounds.
-- Capacitor is configured with a generated Android project, mobile viewport/safe-area handling, touch hardening, and placeholder native app assets.
+- Scrolling `3000 x 3000` world with player-follow camera, world-edge clamping, and boundary-pressure feedback.
 - Three playable characters: Ghost, Bruiser, Hacker.
 - Six total weapons in the pool, but only four weapon slots can be owned in a run.
 - Weapon upgrades currently run from level 1 to level 5.
@@ -145,24 +149,15 @@ Broad by intent. The game should be readable for casual players and strategicall
 - Heal orbs that restore 5% max HP and are globally throttled.
 - Surge events every 40 seconds outside boss flow.
 - Recurring three-phase boss with warning, intro, boss bar, phase announcements, and post-kill reward draft.
-- Boss-gated weapon Ascension draft for level-5 weapons, with Cryo, Pulse, EMP, Swarm, and ARC BLADE transformation pools currently live.
+- Boss-gated weapon Ascension draft for level-5 weapons, with live pools for Cryo, Pulse, EMP, Swarm, and Arc Blade.
 - Death screen with run stats, equipped weapons, and run synergies.
 - Save-backed records screen with global and per-character bests.
 - Persistent synergy discovery tracking with first-discovery pause overlay.
 - Procedural audio for weapons, hits, XP, surges, boss warning/phases/death, and boss music.
 - Stronger damage feedback including screen flash, low-health vignette, HP lag bar, and barrier-heal HP bar segment.
-- Data-network background nodes, links, and packet motion generated once per run and culled to the current camera view.
-- Red world-boundary warning overlays plus hard player clamping at the arena edge.
 - Cryo freeze buildup is live with per-enemy freeze meters, thaw cooldowns, frost visuals, and thaw burst feedback.
-- Bruiser low-HP damage bonus and Hacker stunned-enemy XP bonus are live, but still implemented as `game.js` checks rather than as clean character passive hooks.
-
-### Playtest lab
-- Developer-facing overlay for quickly assembling a test build, previewing resulting player stats, and starting or reopening a run in that test state.
-- Accessed from the main menu through the `PLAYTEST LAB` button. During a playtest run, it can also be reopened through the on-screen `LAB` button, and `L` reopens it while a playtest run is active if no other overlay or discovery pause is up.
-- Exposes direct weapon tier editing for every weapon, passive stack editing, Ascension selection for weapons that are set to Tier 5, and run actions including start test session, resume test, refill HP, reset build, restart test, and return to menu.
-- Any newly added feature that materially affects gameplay should also be made available in the playtest lab so it can be exercised quickly without needing a full progression path or long run setup.
-- The selected playtest build itself is only kept in runtime memory, but playtest runs are not isolated from progression: deaths still write run records through `recordRun()`, and any first-time synergy discoveries still persist through `recordDiscovery()`.
-- It should be hidden or disabled before public release or store submission unless that save/progression coupling is intentionally made player-facing, because it currently exposes direct build editing from the main menu and during test runs.
+- Playtest lab overlay with instant weapon/passive tier editing, ascension selection, and world/camera debug readouts.
+- Capacitor configuration plus committed Android project are live in-repo.
 
 ### Built but still likely to change
 - Weapon tuning and upgrade text.
@@ -170,13 +165,13 @@ Broad by intent. The game should be readable for casual players and strategicall
 - Boss numbers and some pattern density.
 - Save schema growth beyond current bests plus discovery storage.
 - Exact freeze thresholds, spread pacing, and boss anti-freeze tuning.
-- Native packaging/store prep is in progress through Capacitor; Android scaffolding exists, while iOS project generation still requires a Mac with Xcode.
 
 ### Not built yet
 - Character unlock flow.
 - Additional characters beyond the current three.
 - Additional weapons beyond the current six.
 - A fuller codex/planning layer on top of records and discoveries.
+- Store prep and shipping polish beyond the current Capacitor/Android setup.
 - Analytics or crash reporting.
 
 ## Current character roster
@@ -186,21 +181,21 @@ Broad by intent. The game should be readable for casual players and strategicall
 - Base speed: 158
 - Passive: 20% dodge chance
 - Playstyle: safest mover, kiting-first, evasive baseline
-- Status: stable reference character; passive is data-defined on the character config
+- Status: stable reference character
 
 ### Bruiser
 - Start weapon: Pulse
 - Base speed: 130
 - Passive: +35% damage while below 50% HP
 - Playstyle: risky aggression, burst conversion while wounded
-- Status: implemented and live; passive currently enforced in `game.js` combat hit paths
+- Status: implemented and live
 
 ### Hacker
 - Start weapon: EMP
 - Base speed: 145
 - Passive: stunned enemies drop 2x XP
 - Playstyle: control and level snowball
-- Status: implemented and live; passive currently enforced in `game.js` enemy death/XP logic
+- Status: implemented and live
 
 ## Current weapons
 The live weapon system is simple and numeric right now:
@@ -215,10 +210,10 @@ The live weapon system is simple and numeric right now:
 |---|---|---|---|
 | Cryo | `#00CFFF` | Fast lane pressure / control setup | Fires 1 to 5 piercing lances as level rises; slows on hit and builds freeze meter |
 | Pulse | `#FFB627` | Burst / explosive chain coverage | Heavy shell with impact explosion and recursive cluster-bomb scaling from level 2 onward |
-| EMP | `#BF77FF` | Radial control / Ascension-led payoff | Expanding stun burst with larger radius and slightly longer stun each level; special payoff behavior now lives in Ascensions like Cascade Pulse, Triple Pulse, and Arc Discharge |
-| Swarm | `#1DFFD0` | Persistent seek damage | Orbiting drones that seek targets; levels mainly add more drones, with Ascensions for kill novas, frenzy chains, and split seekers |
+| EMP | `#BF77FF` | Radial control / scaling burst | Expanding stun burst with pure per-level scaling in radius, stun duration, and damage multiplier |
+| Swarm | `#1DFFD0` | Persistent seek damage | Orbiting drones that seek targets; levels mainly add more drones |
+| Arc Blade | `#FF2D9B` | Orbiting boomerang pressure | `JAC'S BOOMERANG`; orbiting return-path blades managed in `game.js`, with a saw blade Ascension |
 | Barrier | `#C6FF00` | Defensive sustain | Cycling absorb shield with recharge and heal refund based on absorbed damage |
-| ARC BLADE | `#FF2D9B` | Looping area sweep / positional coverage | Throws spinning neon boomerangs into tight elliptical loops that follow the player, circle back from the far side, and gain wider directional coverage as levels add opposite-side and 120-degree launches |
 
 ### Live per-weapon detail
 
@@ -238,24 +233,15 @@ The live weapon system is simple and numeric right now:
 - Level 4: cluster chain extends another generation.
 - Level 5: cluster chain extends to four total generations.
 - Frozen-target bonus damage logic is wired, but depends on freeze being active.
-- `ASCENSIONS.pulse` currently defines `chain_reaction`, `collapsed_round`, `overload_round`, `proximity_mine`, and `fragmentation`.
-- Current implementation note: Pulse Ascension runtime state uses `player._pulseMines`, `player._pulseOverloadCounter`, `game.pendingExplosions`, and `game.slowFields`.
-- Proximity Mine tuning note: mines currently deal 3x base Pulse damage in a 120px blast and leave behind a 2-second amber slow field.
 
 #### EMP
-- Level 1: radius 160px, stun 1.2s, damage x1.0 on the reduced EMP base damage.
-- Level 2: radius 200px, stun 1.4s, damage x1.3 on the reduced EMP base damage.
-- Level 3: radius 245px, stun 1.6s, damage x1.7 on the reduced EMP base damage.
-- Level 4: radius 295px, stun 1.8s, damage x2.2 on the reduced EMP base damage.
-- Level 5: radius 350px, stun 2.0s, damage x2.8 on the reduced EMP base damage.
-- EMP burst damage has been reduced to roughly 45% of the earlier values so its identity stays control-first rather than lethal burst-first.
-- EMP burst damage is now a flat tuned base-damage value again across base and Ascension variants, so it can still finish enemies instead of being held above a max-HP floor.
-- Base EMP no longer gets level-gated overload explosions, marked kills, or shockwaves; those kinds of special effects now belong to Ascensions only.
+- EMP is now a clean scaling weapon with no baked-in per-level special rules.
+- Level 1: 160px burst, 1.2s stun, x1.0 damage multiplier.
+- Level 2: 200px burst, 1.4s stun, x1.3 damage multiplier.
+- Level 3: 245px burst, 1.6s stun, x1.7 damage multiplier.
+- Level 4: 295px burst, 1.8s stun, x2.2 damage multiplier.
+- Level 5: 350px burst, 2.0s stun, x2.8 damage multiplier.
 - `ASCENSIONS.emp` currently defines `cascade_pulse`, `triple_pulse`, and `arc_discharge`.
-- Current implementation note: EMP Ascension runtime state uses `game.tripleWaves`, `game.updateTripleWaves`, `game.pendingCascades`, `game.updatePendingCascades`, `game.fireCascadeBurst`, `game.applyCascadePulse`, and `game.applyArcDischarge`.
-- Cascade Pulse now queues a 0.4-second charge on every enemy damaged by the main EMP burst, then releases a 100px secondary burst at that enemy's current position that damages nearby enemies and stuns them for 1.0s, with no further chaining beyond that one layer.
-- Triple Pulse now renders as three independently expanding rings with distinct speeds and per-stage audio cues, and each ring is pure knockback only with no stun, using stronger push on the farther rings to create space.
-- Arc Discharge now makes each stunned enemy fire up to 3 arcs toward the nearest non-stunned enemies within 250px, falling back to nearby already-stunned non-source enemies if no fresh targets are available, dealing 12% of each target's max HP per arc and applying a brief mini-stun, capped at 20 total arcs per burst.
 
 #### Swarm
 - Level 1: 2 drones.
@@ -265,8 +251,12 @@ The live weapon system is simple and numeric right now:
 - Level 5: 6 drones.
 - Drones orbit, acquire nearby targets, seek, hit, and return.
 - `ASCENSIONS.swarm` currently defines `nova_swarm`, `frenzy`, and `split_swarm`.
-- Split Swarm split drones now live for 3 seconds and try to claim different targets before falling back to already-claimed enemies.
-- Current implementation note: Swarm Ascension runtime state uses `player._novaDrones`, `player._splitDrones`, main-drone `hasSplitThisContact`, `game.handleNovaDroneKill`, `game.spawnSplitDrone`, `game.updateSplitDrones`, and `game.drawSplitDrones`.
+
+#### Arc Blade
+- Display name: `JAC'S BOOMERANG`.
+- Live behavior: curved boomerang discs orbit out and back around the player; runtime logic lives in `game.js`.
+- Current implementation note: Arc Blade has a live Ascension pool entry but only one option right now.
+- `ASCENSIONS.arcblade` currently defines `saw_blade`.
 
 #### Barrier
 - Level 1: absorb 40, active 5s, recharge 8s.
@@ -275,14 +265,6 @@ The live weapon system is simple and numeric right now:
 - Level 4: absorb 130, active 8s, recharge 5s.
 - Level 5: absorb 175, active 10s, recharge 4s.
 - When the shield cycle ends or breaks, the player heals for absorbed damage up to missing HP.
-
-#### ARC BLADE
-- Level 1: one boomerang thrown toward the nearest enemy in a tight elliptical loop around the player using roughly `rx 55 / ry 35`.
-- Level 2: the loop grows to roughly `rx 65 / ry 42` while keeping the same single-disc forward launch.
-- Level 3: two boomerangs launch at once, one toward the nearest enemy and one directly behind the player, with loops around `rx 75 / ry 48`.
-- Level 4: the two-disc opposite-direction pattern remains, with tighter `rx 85 / ry 55` loops and piercing hits that can connect again on the back half of the oval.
-- Level 5: three boomerangs launch in a 120-degree spread, each following its own `rx 95 / ry 62` loop around the player.
-- Current implementation note: ARC BLADE now renders as an angular two-armed boomerang shape with a white neon edge, spins on its own axis in flight, uses position-history trails, and recalculates each ellipse centre from the player's current position every frame so the full loop moves with the player.
 
 ## Current passive upgrades
 | ID | Label | Live effect |
@@ -304,6 +286,13 @@ The live weapon system is simple and numeric right now:
 - Owned weapons can level up to 5.
 - Boss kills currently reuse the same pool structure in a dedicated reward draft.
 - Upgrade text should stay explicit and numeric wherever practical.
+
+## Current Ascension pools
+- Cryo: `cryo_storm`, `permafrost`, `cryo_nova`, `glacial_lance`, `frost_field`, `shatter`
+- Pulse: `chain_reaction`, `collapsed_round`, `overload_round`, `proximity_mine`, `fragmentation`
+- EMP: `cascade_pulse`, `triple_pulse`, `arc_discharge`
+- Swarm: `nova_swarm`, `frenzy`, `split_swarm`
+- Arc Blade: `saw_blade`
 
 ## Current synergies and progression layer
 
@@ -410,8 +399,6 @@ The live weapon system is simple and numeric right now:
 
 ### Refactor smell list
 - Character-specific logic duplicated across multiple files.
-- Character passives still partly live as ad hoc `game.js` conditionals instead of a shared hook surface.
-- Bruiser and Hacker passives are hardcoded checks in `game.js` rather than data-driven hooks on the character definition. Before adding a fourth character, refactor to a passive hook surface so new characters can define their passive behaviour without editing `game.js`.
 - Weapon behavior split between too many ad hoc checks in `game.js`.
 - UI strings duplicated in several places.
 - Progression logic leaking into combat code.
@@ -420,38 +407,28 @@ The live weapon system is simple and numeric right now:
 ## Current code map
 
 ```text
-android/       - generated Capacitor Android project
-ios/           - generated Capacitor iOS project when created on a Mac; absent on this Windows machine
-
 src/
   main.js        - app entry, loads save and starts Game
+  constants.js   - world dimensions and boundary-warning constants
   progression.js - save schema, records, synergy persistence
-  game.js        - core loop, menus, overlays, run flow, combat orchestration, world camera state, background/boundary rendering via `initBackground`, `updateBackground`, `drawBackground`, and `drawBoundaryWarning`, plus Pulse runtime helpers like `updateMines`, `drawMines`, `triggerMineExplosion`, `updateSlowFields`, `drawSlowFields`, and delayed Pulse explosions, EMP helpers `updateTripleWaves`, `drawTripleWaves`, `applyCascadePulse`, and `applyArcDischarge`, Swarm helpers `handleNovaDroneKill`, `spawnSplitDrone`, `updateSplitDrones`, and `drawSplitDrones`, and ARC BLADE loop helpers like `launchDisc`, `updateArcBlade`, `drawArcBlade`, `updatePhantoms`, `spawnPhantomBlade`, `spawnBladeStorm`, and `triggerRicochet`
-  player.js      - character roster, player factory, weapon-state helpers, and per-run Pulse/Swarm Ascension tracking fields like `_pulseMines`, `_pulseOverloadCounter`, `_novaDrones`, and `_splitDrones`
-  weapons.js     - weapon defs, bullets, ascension defs, cryo ascension hooks, pulse clusters, shield logic hooks
+  game.js        - core loop, world camera, menus, overlays, playtest lab, run flow, combat orchestration
+  player.js      - character roster, player factory, weapon-state helpers
+  weapons.js     - weapon defs, bullets, ascension defs, cryo ascension hooks, pulse clusters, and shield logic hooks
   enemies.js     - enemy roster, spawn logic, targeting and status helpers, freeze-state updates, and freeze spread
   upgrades.js    - passive defs, upgrade pool generation, `buildAscensionPool`, `applyUpgrade`, and `applyAscension`
   boss.js        - boss creation, update logic, rendering, phase behavior
   particles.js   - particles and combat feedback primitives
   hud.js         - HUD DOM creation and overlay helpers
   input.js       - keyboard and virtual joystick
-  audio.js       - procedural SFX and boss music helpers, including `playNovaDetonationSound` and `playFrenzySound`
+  audio.js       - procedural SFX and boss music helpers
   style.css      - all HUD/menu/overlay styling
 ```
-
-### Important implementation mismatches to remember
-- Ghost's passive is currently represented directly on character data, while Bruiser and Hacker passives are still hardcoded in `game.js`.
-- The playtest lab is fully implemented in the menu/runtime flow, but it is still a developer-facing tool rather than a settled player-facing feature.
-- Some Ascension descriptions in `weapons.js` are now slightly behind the true runtime numbers and cadence. At the moment, `CLAUDE.md` should be treated as the clearer reference for the latest live Pulse/EMP/Swarm tuning.
 
 ## Technical conventions
 - Vanilla JS only.
 - HTML5 Canvas 2D for gameplay rendering.
 - Vite for dev/build.
-- Mobile update workflow is `npm run build` -> `npx cap sync` -> open the Android project in Android Studio.
 - Game state primarily lives on the `Game` instance.
-- EMP Triple Pulse runtime state currently drives a single expanding shockwave via `game.tripleWaves`.
-- `WORLD_W` and `WORLD_H` currently define a shared fixed arena size of `3000`.
 - Arrays for active entities are acceptable; prune/filter dead entries.
 - Prefer readable formulas over over-engineered abstractions.
 - Weapon modules should communicate through callbacks/helpers rather than importing `game.js` directly where possible.
@@ -500,35 +477,9 @@ src/
 3. Tune boss fairness, duration, and phase readability after the latest escalation pass.
 4. Expand records/discoveries into a fuller codex or planning surface without adding permanent stat grind.
 5. Keep moving gameplay systems toward easier future content addition.
-6. Refactor character passives from hardcoded `game.js` checks into a hook surface on the character definition object in `player.js`. This is required before the roster expands beyond three characters.
 
 ## Changelog
-- 2026-04-10: Tightened ARC BLADE again by replacing the circular spoke disc render with a spinning boomerang silhouette, shrinking its loop sizes substantially, and making each ellipse centre recalculate from the player's current position every frame so the weapon orbits with player movement.
-- 2026-04-10: Reworked ARC BLADE movement from a mirrored bezier throw into fixed world-space elliptical loops, switched its trail to position-history dots, and changed multi-disc launch directions so Tier 3 and Tier 4 cover front plus back while Tier 5 spreads discs evenly across 120-degree lanes.
-- 2026-04-10: Re-reviewed this brief against the latest live weapon/Ascension worktree, corrected the EMP roster summary so it no longer claims removed base-overload behavior, and clarified that `CLAUDE.md` is currently more accurate than a few stale inline Ascension descriptions in `weapons.js`.
-- 2026-04-10: Cut Swarm's Pulse Orbit Ascension and removed its runtime, state, audio, and particle cleanup paths.
-- 2026-04-10: Retuned Swarm again by making temporary Nova drones larger, brighter, pulsing, and easier to read, replacing Pulse Orbit's old phase-and-spoke model with a 5-second charge into rapid sequential outward drone streaks, and upgrading Split Swarm so split drones render as full mini-drones, prefer different targets, and expire after 3 seconds.
-- 2026-04-10: Reworked all four Swarm Ascensions by making Nova drones clearer and faster with expiry feedback plus a dedicated detonation sound, adding one-shot Frenzy activation audio, fully rewriting Pulse Orbit around phase-based inward windup plus world-space spoke rendering and burst audio, and moving Split Swarm to dedicated spawn/update/draw helpers with per-contact split flags and cleaner resets.
-- 2026-04-10: Added the full Swarm Ascension pool with Nova Swarm, Frenzy, Pulse Orbit, and Split Swarm, including temporary nova drones, frenzy drone chaining, pulse-orbit burst spokes and wind-up visuals, split-drone seekers, and clean Swarm state resets on new runs.
-- 2026-04-10: Reworked Cascade Pulse into delayed detonations that follow burst-hit enemies for 0.4 seconds before releasing a damaging 100px stun burst, and refocused Triple Pulse into pure pushback by removing its stun, softening its knockback values, extending the decay, and giving runners extra scatter while brutes still barely move.
-- 2026-04-10: Simplified Cascade Pulse into a single universal 100px ripple emitted by every enemy hit by the main EMP burst, removed the old cascade-level tracking in favour of a temporary `_cascaded` flag, and added distance-scaled Triple Pulse knockback with heavier outer-ring push plus reduced brute displacement.
-- 2026-04-10: Removed the EMP Ascension no-kill max-HP floor, retuned base EMP damage slightly lower so it can still kill without returning to old one-shot behavior, and made Cascade Pulse more rewarding by adding stronger emitter and target-hit feedback on affected enemies.
-- 2026-04-10: Improved EMP follow-through again by making Cascade Pulse render its glow rings from the actual pulse emitters instead of the newly stunned targets, and letting Arc Discharge fall back to nearby already-stunned enemies so arcs can finish weakened EMP victims when no fresh targets are in range.
-- 2026-04-10: Restored the base EMP fire sound for base EMP, Cascade Pulse, and Arc Discharge while keeping Triple Pulse on its staged-only audio, upgraded Cascade Pulse ring readability with brighter world-space glow settings, and expanded Arc Discharge so each stunned enemy can link to up to three nearby non-stunned targets with a 20-arc cap.
-- 2026-04-10: Removed the base EMP fire sound so only Ascension-specific EMP sounds remain, upgraded Cascade Pulse into a two-level ripple, and redesigned Arc Discharge so stunned enemies zap the nearest non-stunned target instead of chaining only between stunned enemies.
-- 2026-04-10: Fixed the EMP Ascension readability pass by correcting Cascade Pulse secondary-target handling so ripples actually fire after the main stun, giving Triple Pulse three independently paced rings with stage-specific audio, and changing Arc Discharge to deal 12% max-HP damage per connection with its own electrical sound.
-- 2026-04-10: Simplified base EMP into a pure scaling radial burst by removing the old level-gated overload and shockwave behavior, switching its level progression to a clean radius/stun/damage-mult table, and leaving special behavior to the EMP Ascension layer only.
-- 2026-04-10: Retuned EMP by cutting burst damage to roughly 45% of its prior values, replacing Triple Pulse's delayed-burst queue with a single expanding `tripleWaves` shockwave, widening Cascade Pulse's secondary ring readability, and giving Arc Discharge a much brighter two-pass glow render.
-- 2026-04-10: Added the full EMP Ascension pool with Cascade Pulse, Triple Pulse, and Arc Discharge, including queued delayed EMP bursts, post-stun cascade logic, stunned-target arc visuals/damage, and particle-system arc rendering.
-- 2026-04-10: Tuned Pulse Ascensions again by moving Overload Round to a 3-shot cadence with stronger screen-space feedback, making Chain Reaction cluster detonations and proc impacts visibly bigger, and upgrading Proximity Mine to a 120px 3x-damage blast that leaves a fading amber slow field.
-- 2026-04-10: Added the full Pulse Ascension pool with Chain Reaction, Collapsed Round, Overload Round, Proximity Mine, and Fragmentation, including mine runtime state, overload HUD tracking, delayed collapsed explosions, and chain-proc cluster handling.
-- 2026-04-10: Re-reviewed this brief against the live repo after the world-space/mobile pass, confirmed the current body still matches the implemented arena/camera/playtest/mobile state, and clarified the older 2026-04-09 weapon-state history so the changelog reads as an ordered progression instead of a contradiction.
-- 2026-04-10: Fixed the first world-space regression by changing bullet pruning to use arena coordinates instead of screen bounds, clamped the camera to the arena edges, strengthened the world-boundary warning with deeper reach plus pulse/edge-line cues, and exposed world/camera debug values in the playtest lab.
-- 2026-04-10: Added a camera-centred world-space arena (`WORLD_W`/`WORLD_H` = `3000`), moved enemies and boss spawning into world coordinates, added the data-network background pass with packet animation and culling, and added boundary warning overlays.
-- 2026-04-10: Clarified in this brief that new gameplay-affecting features should be surfaced through the playtest lab, and updated the playtest lab overlay styling so it supports visible touch scrolling on mobile devices.
-- 2026-04-10: Reworked the main menu for small mobile screens by collapsing the separate loadout panel into the selected character card, tightening card spacing, shrinking the records control into a compact text button, and reserving a persistent bottom action area so `JACK IN` stays visible on short Android displays without scrolling.
-- 2026-04-09: Documented the live playtest lab and passive-hook debt, removed legacy weapon `stats`/`paths` state from `player.js`, added the Claude Code architecture-flagging instruction, set up Capacitor with Android scaffolding plus mobile viewport/audio/touch hardening, generated placeholder native assets, and updated `.gitignore` plus this brief to match the current repo state.
-- 2026-04-09: Updated this brief to match the then-live code more closely by documenting the playtest lab, recording that Bruiser/Hacker passive hooks still lived in `game.js`, and flagging the still-present legacy weapon-state fields from the older path-tree experiment as an architecture concern before they were later removed.
+- 2026-04-12: Reconciled this document against the live codebase: documented Arc Blade (`JAC'S BOOMERANG`), the current Pulse/EMP/Swarm/Cryo/Arc Blade Ascension pools, EMP's pure scaling table, the scrolling world camera, the playtest lab, and the Capacitor-plus-Android setup; removed stale "Cryo-only Ascensions live" and five-weapon wording.
 - 2026-04-09: Added the Ascension system, including boss-gated level-5 weapon transformations, a dedicated Ascension draft overlay, HUD `ASC` indicators, and the first full Cryo Ascension pool with Storm, Permafrost, Nova, Glacial Lance, Frost Field, and Shatter behaviors.
 - 2026-04-09: Tightened the boss again by reducing downtime, increasing bullet density, improving intercept/lane-cut pressure, adding marked charge impact bursts, and making phase escalations more demanding while keeping damage tied to visible telegraphs and avoidable positioning mistakes.
 - 2026-04-09: Reactivated Cryo as a live freeze-meter system with thaw cooldowns, staged frost visuals, proportional freeze spread, and boss-specific anti-freeze handling, then removed live gameplay synergies again while keeping the progression/discovery scaffolding.
@@ -539,6 +490,7 @@ src/
 - 2026-04-09: Added Barrier as a fifth weapon with a cycling absorb shield and introduced healing orb sustain drops.
 - 2026-04-09: Redesigned the boss around spawn-time HP scaling, predictive intercept movement, harsher damage, violent invulnerable phase resets with a transition HP tax/teleport/shockwave, denser late-phase patterns, and escalating phase-based freeze/stun immunities.
 - 2026-04-09: Removed EMP overload from the discoverable synergy list so progression only tracks cross-weapon interactions, not single-weapon upgrade payoffs.
+- 2026-04-09: Changed first-time synergy discovery from a lightweight banner into a paused reveal moment so new unlocks can be examined before combat resumes.
 - 2026-04-09: Changed first-time synergy discovery from a lightweight banner into a paused reveal moment so new unlocks can be examined before combat resumes.
 - 2026-04-09: Added `progression.js` with persistent personal bests, synergy discovery tracking, first-discovery reveal/audio, a records screen, and death-screen run record reporting.
 - 2026-04-09: Reworked the live boss into a longer three-phase encounter with higher durability, circling movement, telegraphed transitions, charge follow-ups, spiral pressure, late-fight barrages/mines, stronger boss-bar state feedback, and updated boss announcements.

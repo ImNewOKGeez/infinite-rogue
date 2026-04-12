@@ -26,8 +26,8 @@ const ARC_BLADE_TIERS = {
   1: { discCount: 1, rx: 55, ry: 35, thetaSpeed: 3.2, dmgMult: 1.0, pierce: false },
   2: { discCount: 1, rx: 65, ry: 42, thetaSpeed: 3.2, dmgMult: 1.3, pierce: false },
   3: { discCount: 2, rx: 75, ry: 48, thetaSpeed: 3.0, dmgMult: 1.3, pierce: false },
-  4: { discCount: 2, rx: 85, ry: 55, thetaSpeed: 2.8, dmgMult: 1.4, pierce: true },
-  5: { discCount: 3, rx: 95, ry: 62, thetaSpeed: 2.6, dmgMult: 1.5, pierce: true },
+  4: { discCount: 2, rx: 85, ry: 55, thetaSpeed: 2.8, dmgMult: 1.4, pierce: false },
+  5: { discCount: 3, rx: 95, ry: 62, thetaSpeed: 2.6, dmgMult: 1.5, pierce: false },
 };
 
 function traceEnemyShape(ctx, e) {
@@ -186,7 +186,7 @@ export class Game {
     this.P._pulseMines = [];
     this.P._pulseOverloadCounter = 0;
     this.P._arcDiscs = [];
-    this.P._phantoms = [];
+    this.P._sawBlade = null;
     this.P._novaDrones = [];
     this.P._splitDrones = [];
     this.P._dr = null;
@@ -360,7 +360,9 @@ export class Game {
     this._spawnEnemies(dt);
     this._updateBoss(dt);
     this._fireWeapons(dt);
-    if (getWeaponLevel(P, 'arcblade')) this.updateArcBlade(dt);
+    if (getWeaponLevel(P, 'arcblade')) {
+      this.updateArcBlade(dt);
+    }
     this.updateTripleWaves(dt);
     this.updatePendingCascades(dt);
     this._updateBullets(dt);
@@ -607,29 +609,32 @@ export class Game {
   }
 
   launchDisc(discIndex, throwAngle) {
-    const tier = ARC_BLADE_TIERS[getWeaponLevel(this.P, 'arcblade')];
+    const P = this.P;
+    const tier = ARC_BLADE_TIERS[getWeaponLevel(P, 'arcblade')];
     if (!tier) return;
 
-    this.P._arcDiscs.push({
+    const cx = P.x + Math.cos(throwAngle) * tier.rx;
+    const cy = P.y + Math.sin(throwAngle) * tier.rx;
+    const disc = {
       rx: tier.rx,
       ry: tier.ry,
       theta: Math.PI,
       thetaSpeed: tier.thetaSpeed,
       throwAngle,
+      cx,
+      cy,
       rotation: 0,
-      dmg: this.P.dmg * tier.dmgMult * 15,
+      dmg: P.dmg * tier.dmgMult * 15,
       pierce: tier.pierce,
       hitEnemies: new Set(),
-      bounceCount: 0,
       discIndex,
-      _clearedForReturn: false,
-      isPhantom: false,
       isSplit: false,
-      splitAngleOffset: 0,
-      x: this.P.x,
-      y: this.P.y,
+      x: P.x,
+      y: P.y,
       trail: [],
-    });
+    };
+
+    P._arcDiscs.push(disc);
     playArcBladeSound();
   }
 
@@ -637,14 +642,33 @@ export class Game {
     const P = this.P;
     const tier = ARC_BLADE_TIERS[getWeaponLevel(P, 'arcblade')];
     if (!tier) return;
+    const arcAscension = P.ascensions.arcblade;
+
+    if (arcAscension !== 'saw_blade' && P._sawBlade) P._sawBlade = null;
+
+    if (arcAscension === 'saw_blade') {
+      if (!P._sawBlade) {
+        P._sawBlade = {
+          theta: 0,
+          thetaSpeed: 2.2,
+          orbitR: 80,
+          rotation: 0,
+          x: P.x,
+          y: P.y,
+          damageTimer: 0,
+        };
+      }
+      if (P._arcDiscs.length) P._arcDiscs = [];
+      this.updateSawBlade(dt);
+      return;
+    }
 
     const target = nearest(P);
     const baseAngle = target
       ? Math.atan2(target.y - P.y, target.x - P.x)
       : 0;
-
     for (let i = 0; i < tier.discCount; i++) {
-      const active = P._arcDiscs.filter(disc => disc.discIndex === i && !disc.isSplit);
+      const active = P._arcDiscs.filter(disc => disc.discIndex === i);
       if (active.length === 0) {
         const throwAngle = getDiscAngle(i, tier.discCount, baseAngle);
         this.launchDisc(i, throwAngle);
@@ -669,20 +693,7 @@ export class Game {
 
       if (!disc._passedPeak && disc.theta >= Math.PI * 2) {
         disc._passedPeak = true;
-
-        if (disc.pierce && !disc._clearedForReturn) {
-          disc._clearedForReturn = true;
-          disc.hitEnemies.clear();
-        }
-
-        if (P.ascensions.arcblade === 'phantom_blade' && !disc.isSplit) {
-          this.spawnPhantomBlade?.(disc);
-        }
-
-        if (P.ascensions.arcblade === 'blade_storm' && !disc.isSplit) {
-          this.spawnBladeStorm?.(disc);
-          return false;
-        }
+        disc.hitEnemies.clear();
       }
 
       if (disc.theta >= Math.PI * 3) {
@@ -699,122 +710,38 @@ export class Game {
           disc.hitEnemies.add(e);
           this.hitEnemy(e, disc.dmg, '#FF2D9B');
 
-          if (P.ascensions.arcblade === 'ricochet' && disc.bounceCount < 3) {
-            this.triggerRicochet?.(disc, e);
-          }
-
           if (!disc.pierce) stopOnHit = true;
         }
       });
       pruneEnemies();
-
       return !stopOnHit;
     });
-
-    this.updatePhantoms?.(dt);
   }
 
-  triggerRicochet(disc, hitEnemy) {
-    let nearestEnemy = null;
-    let nearestDist = Infinity;
-    enemies.forEach(e => {
-      if (disc.hitEnemies.has(e)) return;
-      if (e === hitEnemy) return;
-      const d = Math.hypot(e.x - disc.x, e.y - disc.y);
-      if (d < 150 && d < nearestDist) {
-        nearestDist = d;
-        nearestEnemy = e;
-      }
-    });
-    if (!nearestEnemy) return;
-
-    disc.bounceCount++;
-    this.hitEnemy(nearestEnemy, disc.dmg * 0.7, '#FF2D9B');
-    disc.hitEnemies.add(nearestEnemy);
-    addArc(disc.x, disc.y, nearestEnemy.x, nearestEnemy.y, 0.2, '#FF2D9B', {
-      glowColor: 'rgba(255, 45, 155, 0.28)',
-      glowWidth: 5,
-      lineWidth: 2,
-      shadowColor: '#FF2D9B',
-      shadowBlur: 10,
-    });
-    pruneEnemies();
-  }
-
-  spawnPhantomBlade(disc) {
+  updateSawBlade(dt) {
     const P = this.P;
-    if (P._phantoms.length >= 3) P._phantoms.shift();
-    P._phantoms.push({
-      x: disc.x,
-      y: disc.y,
-      life: 3.0,
-      maxLife: 3.0,
-      rotation: disc.rotation,
-      dmg: disc.dmg * 0.8,
-      hitCooldowns: new Map(),
-    });
-  }
+    if (!P._sawBlade) return;
+    const tier = ARC_BLADE_TIERS[getWeaponLevel(P, 'arcblade')];
+    if (!tier) return;
+    const saw = P._sawBlade;
 
-  updatePhantoms(dt) {
-    const P = this.P;
-    if (!P._phantoms?.length) return;
-    P._phantoms = P._phantoms.filter(ph => {
-      ph.life -= dt;
-      ph.rotation += dt * 6;
-      if (ph.life <= 0) return false;
+    saw.thetaSpeed = 2.2;
+    saw.theta += saw.thetaSpeed * dt;
+    saw.rotation += dt * 5;
+    saw.x = P.x + Math.cos(saw.theta) * saw.orbitR;
+    saw.y = P.y + Math.sin(saw.theta) * saw.orbitR;
 
+    saw.damageTimer -= dt;
+    if (saw.damageTimer <= 0) {
+      saw.damageTimer = 0.1;
+      const sawDmg = P.dmg * tier.dmgMult * 15 * 0.25;
       enemies.forEach(e => {
-        const cd = ph.hitCooldowns.get(e) || 0;
-        if (cd > 0) {
-          ph.hitCooldowns.set(e, cd - dt);
-          return;
-        }
-        if (Math.hypot(e.x - ph.x, e.y - ph.y) < e.r + 12) {
-          this.hitEnemy(e, ph.dmg, '#FF2D9BCC');
-          ph.hitCooldowns.set(e, 0.5);
+        if (Math.hypot(e.x - saw.x, e.y - saw.y) < 40 + e.r) {
+          this.hitEnemy(e, sawDmg, '#FF2D9B');
         }
       });
       pruneEnemies();
-      return true;
-    });
-  }
-
-  spawnBladeStorm(disc) {
-    const P = this.P;
-    const splitAngles = [-0.4, 0, 0.4];
-
-    splitAngles.forEach((angleOffset, i) => {
-      const splitThrowAngle = disc.throwAngle + Math.PI + angleOffset;
-      const splitRx = Math.max(40, disc.rx * 0.55);
-      const splitRy = Math.max(22, disc.ry * 0.55);
-
-      P._arcDiscs.push({
-        cx: disc.x + Math.cos(splitThrowAngle) * splitRx,
-        cy: disc.y + Math.sin(splitThrowAngle) * splitRx,
-        rx: splitRx,
-        ry: splitRy,
-        theta: Math.PI,
-        thetaSpeed: disc.thetaSpeed * 1.15,
-        throwAngle: splitThrowAngle,
-        rotation: disc.rotation + i * 0.5,
-        dmg: disc.dmg * 0.6,
-        pierce: disc.pierce,
-        hitEnemies: new Set(),
-        bounceCount: 0,
-        discIndex: disc.discIndex,
-        _clearedForReturn: false,
-        _passedPeak: false,
-        isPhantom: false,
-        isSplit: true,
-        splitAngleOffset: angleOffset,
-        x: disc.x,
-        y: disc.y,
-        trail: [],
-      });
-    });
-
-    addBurst(disc.x, disc.y, '#FF2D9B', 10, 100, 3, 0.4);
-    addRing(disc.x, disc.y, 40, '#FF2D9B', 2, 0.3);
+    }
   }
 
   updatePendingExplosions(dt) {
@@ -2114,7 +2041,7 @@ export class Game {
     next.hp = next.maxHp;
     next.hpLag = next.maxHp;
     next._arcDiscs = [];
-    next._phantoms = [];
+    next._sawBlade = null;
     this.P = next;
     this.cryoFields = [];
     this.barrierHealFx = [];
@@ -2345,6 +2272,7 @@ export class Game {
     const { ctx } = this;
     const P = this.P;
     if (!P.w?.arcblade && !getWeaponLevel(P, 'arcblade')) return;
+    if (P.ascensions.arcblade === 'saw_blade') return;
 
     const drawBoomerang = (x, y, rotation, alpha = 1, scale = 1) => {
       ctx.save();
@@ -2353,10 +2281,10 @@ export class Game {
       ctx.rotate(rotation);
       ctx.scale(scale, scale);
 
-      ctx.strokeStyle = '#FF2D9B';
-      ctx.lineWidth = 4;
       ctx.lineCap = 'round';
       ctx.lineJoin = 'round';
+      ctx.strokeStyle = '#FF2D9B';
+      ctx.lineWidth = 4;
       ctx.shadowColor = '#FFFFFF';
       ctx.shadowBlur = 12;
 
@@ -2384,29 +2312,67 @@ export class Game {
       disc.trail?.forEach((pos, i) => {
         ctx.globalAlpha = (i / disc.trail.length) * 0.4;
         ctx.fillStyle = '#FF2D9B';
+        ctx.shadowColor = ctx.fillStyle;
+        ctx.shadowBlur = 4;
         ctx.beginPath();
         ctx.arc(pos.x, pos.y, Math.max(2, 6 - i * 0.6), 0, Math.PI * 2);
         ctx.fill();
       });
+      ctx.shadowBlur = 0;
       ctx.globalAlpha = 1;
       drawBoomerang(disc.x, disc.y, disc.rotation);
     });
 
-    if (P._phantoms?.length) {
-      P._phantoms.forEach(ph => {
-        const alpha = (ph.life / ph.maxLife) * 0.65;
-        drawBoomerang(ph.x, ph.y, ph.rotation, alpha * 0.65, 0.85);
-        ctx.globalAlpha = alpha * 0.4;
-        ctx.strokeStyle = '#FF2D9B';
-        ctx.lineWidth = 1;
-        ctx.setLineDash([4, 4]);
-        ctx.beginPath();
-        ctx.arc(ph.x, ph.y, 18, 0, Math.PI * 2);
-        ctx.stroke();
-        ctx.setLineDash([]);
-        ctx.globalAlpha = 1;
-      });
+  }
+
+  drawSawBlade() {
+    const { ctx } = this;
+    const saw = this.P._sawBlade;
+    if (!saw) return;
+    ctx.save();
+    ctx.translate(saw.x, saw.y);
+    ctx.rotate(saw.rotation);
+
+    for (let i = 0; i < 4; i++) {
+      ctx.save();
+      ctx.rotate((i / 4) * Math.PI * 2);
+      ctx.translate(16, 0);
+      ctx.strokeStyle = '#FF2D9B';
+      ctx.lineWidth = 4;
+      ctx.lineCap = 'round';
+      ctx.lineJoin = 'round';
+      ctx.shadowColor = '#FFFFFF';
+      ctx.shadowBlur = 10;
+      ctx.beginPath();
+      ctx.moveTo(-8, 0);
+      ctx.lineTo(0, 0);
+      ctx.lineTo(0, -8);
+      ctx.stroke();
+
+      ctx.strokeStyle = '#FFFFFF';
+      ctx.lineWidth = 1.5;
+      ctx.beginPath();
+      ctx.moveTo(-8, 0);
+      ctx.lineTo(0, 0);
+      ctx.lineTo(0, -8);
+      ctx.stroke();
+      ctx.restore();
     }
+
+    ctx.shadowColor = '#FF2D9B';
+    ctx.shadowBlur = 20;
+    ctx.fillStyle = '#FF2D9B44';
+    ctx.beginPath();
+    ctx.arc(0, 0, 40, 0, Math.PI * 2);
+    ctx.fill();
+
+    ctx.strokeStyle = '#FF2D9B66';
+    ctx.lineWidth = 1;
+    ctx.shadowBlur = 0;
+    ctx.beginPath();
+    ctx.arc(0, 0, 40, 0, Math.PI * 2);
+    ctx.stroke();
+    ctx.restore();
   }
 
   drawEnemies(perfMode) {
@@ -2930,6 +2896,7 @@ export class Game {
     this.drawHealOrbs();
     this.drawSlowFields();
     this.drawArcBlade();
+    this.drawSawBlade();
     drawBoss(ctx, this.boss);
     this.drawEnemies(perfMode);
     this.drawBullets(ultraMode);

@@ -86,7 +86,7 @@ export function mkPlayer(W, H, char = CHARACTERS.ghost) {
     ascensions: {},
     _arcDiscs: [],
     _arcCurveDir: -1,
-    _phantoms: [],
+    _sawBlade: null,
     _pulseOverloadCounter: 0,
     _pulseMines: [],
     _novaDrones: [],
