@@ -105,6 +105,23 @@ export const ASCENSIONS = {
       name: 'SAW BLADE',
       description: 'All boomerangs merge into a single large orbital saw. Continuously damages all enemies within its radius.',
     },
+  ],
+  molotov: [
+    {
+      id: 'inferno',
+      name: 'INFERNO',
+      description: 'All fire pools merge into one massive zone. Combined radius, 5s duration, 50% more damage.',
+    },
+    {
+      id: 'bouncing_cocktail',
+      name: 'BOUNCING COCKTAIL',
+      description: 'Bottles bounce 3 times, leaving diminishing fire pools at each landing point.',
+    },
+    {
+      id: 'cluster_molotov',
+      name: 'CLUSTER MOLOTOV',
+      description: 'Each bottle shatters into 3 sub-bottles on impact, each creating a smaller fire pool.',
+    },
   ]
 };
 
@@ -134,6 +151,14 @@ export const EMP_SCALING = {
   3: { radius: 245, stun: 1.6, dmgMult: 1.7 },
   4: { radius: 295, stun: 1.8, dmgMult: 2.2 },
   5: { radius: 350, stun: 2.0, dmgMult: 2.8 },
+};
+
+export const MOLOTOV_TIERS = {
+  1: { pools: 1, radius: 55, duration: 2.5, fireRate: 2.5, dmgMult: 8 },
+  2: { pools: 1, radius: 70, duration: 2.5, fireRate: 2.2, dmgMult: 9 },
+  3: { pools: 2, radius: 80, duration: 3.0, fireRate: 2.0, dmgMult: 10 },
+  4: { pools: 2, radius: 90, duration: 3.0, fireRate: 1.8, dmgMult: 11 },
+  5: { pools: 3, radius: 100, duration: 3.0, fireRate: 1.6, dmgMult: 12 },
 };
 
 function getEmpScaling(lvl) {
@@ -600,6 +625,13 @@ export const WDEFS = {
     tick(_p, _dt, _onHitEnemy, _helpers = {}) {
       // ARC BLADE runtime is managed directly in game.js.
     }
+  },
+  molotov: {
+    id: 'molotov', name: "LUKE'S MOLOTOV", icon: '🔥', col: '#FF2D9B',
+    maxLvl: 5,
+    baseRate: 0,
+    getRate: () => 0,
+    fire() {},
   },
   barrier: {
     id: 'barrier', name: 'BARRIER', icon: '◎', col: '#C6FF00',

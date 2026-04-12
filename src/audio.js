@@ -246,6 +246,51 @@ export function playArcBladeReturnSound() {
   noiseShot(0.018, 0.001, 0.03, 'bandpass', 900, 1.2);
 }
 
+export function playMolotovThrowSound() {
+  osc('triangle', 300, 0.1, 0.003, 0.15, 150);
+}
+
+export function playMolotovLandSound() {
+  const ctx = getAudioCtx();
+  const t = n();
+
+  const impactOsc = ctx.createOscillator();
+  const impactGain = ctx.createGain();
+  impactOsc.type = 'triangle';
+  impactOsc.frequency.setValueAtTime(100, t);
+  impactOsc.frequency.exponentialRampToValueAtTime(60, t + 0.1);
+  impactGain.gain.setValueAtTime(0.0001, t);
+  impactGain.gain.linearRampToValueAtTime(0.18, t + 0.005);
+  impactGain.gain.exponentialRampToValueAtTime(0.001, t + 0.1);
+  impactOsc.connect(impactGain);
+  impactGain.connect(master);
+  impactOsc.start(t);
+  impactOsc.stop(t + 0.14);
+
+  const crackleOsc = ctx.createOscillator();
+  const crackleGain = ctx.createGain();
+  const crackleLfo = ctx.createOscillator();
+  const crackleLfoGain = ctx.createGain();
+  crackleOsc.type = 'square';
+  crackleOsc.frequency.setValueAtTime(400, t);
+  crackleLfo.type = 'square';
+  crackleLfo.frequency.setValueAtTime(28, t);
+  crackleLfoGain.gain.setValueAtTime(0.045, t);
+  crackleGain.gain.setValueAtTime(0.0001, t);
+  crackleGain.gain.linearRampToValueAtTime(0.05, t + 0.01);
+  crackleGain.gain.exponentialRampToValueAtTime(0.001, t + 0.16);
+  crackleLfo.connect(crackleLfoGain);
+  crackleLfoGain.connect(crackleGain.gain);
+  crackleOsc.connect(crackleGain);
+  crackleGain.connect(master);
+  crackleOsc.start(t);
+  crackleLfo.start(t);
+  crackleOsc.stop(t + 0.2);
+  crackleLfo.stop(t + 0.2);
+
+  noiseShot(0.08, 0.002, 0.12, 'highpass', 1800, 1.5);
+}
+
 export function playNovaDetonationSound() {
   const ctx = getAudioCtx();
   const t = n();

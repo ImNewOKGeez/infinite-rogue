@@ -68,6 +68,7 @@ export function mkPlayer(_W, _H, char = CHARACTERS.ghost) {
     pulse: mkWeaponState(),
     emp: mkWeaponState(),
     swarm: mkWeaponState(),
+    molotov: mkWeaponState(),
     barrier: mkWeaponState(),
     arcblade: mkWeaponState(),
   };
@@ -84,6 +85,9 @@ export function mkPlayer(_W, _H, char = CHARACTERS.ghost) {
     _arcDiscs: [],
     _sawBlade: null,
     _lanceCounter: 0,
+    _molotovTimer: 0,
+    _firePools: [],
+    _bottles: [],
     _pulseOverloadCounter: 0,
     _pulseMines: [],
     _novaDrones: [],

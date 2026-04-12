@@ -2,9 +2,9 @@ import { initHUD, updateHUD, showOverlay, hideOverlay, setSurge, setBossBar, sho
 import { initInput, initJoystick, jDir } from './input.js';
 import { CHARACTERS, addWeapon, getAscension, getOwnedWeaponIds, getWeaponLevel, hasAscension, mkPlayer, mkWeaponState } from './player.js';
 import { enemies, resetEnemies, spawnEnemy, pruneEnemies, dist2, nearest, setExtraTarget, clearExtraTarget, tickEnemyStatus, updateEnemyFreezeState, applyStun, applySlow, applyKnockback, getEffectiveFreezeThreshold } from './enemies.js';
-import { ASCENSIONS, EMP_SCALING, WDEFS, bullets, resetBullets, resetPulseClusters, handleCryoImpact, updateCryoFields, getPulseHitDamage, triggerPulseExplosion, spawnBullet, applyFreezeMeter, spawnPulseClusters } from './weapons.js';
+import { ASCENSIONS, EMP_SCALING, MOLOTOV_TIERS, WDEFS, bullets, resetBullets, resetPulseClusters, handleCryoImpact, updateCryoFields, getPulseHitDamage, triggerPulseExplosion, spawnBullet, applyFreezeMeter, spawnPulseClusters } from './weapons.js';
 import { PASSIVES, buildPool, applyUpgrade, applyAscension } from './upgrades.js';
-import { resetParticles, updateParticles, addRing, addBurst, addDot, addArc, drawParticles } from './particles.js';
+import { particles, resetParticles, updateParticles, addRing, addBurst, addDot, addArc, drawParticles } from './particles.js';
 import { mkBoss, updateBoss, drawBoss, hitBoss, BOSS_SPAWN_TIME, BOSS_RESPAWN_DELAY } from './boss.js';
 import { SYNERGIES, recordDiscovery, recordRun } from './progression.js';
 import { WORLD_BOUNDARY_WARN, WORLD_H, WORLD_W } from './constants.js';
@@ -13,6 +13,7 @@ import {
   playEMPSound,
   playCryoFire, playCryoStormSound, playGlacialLanceSound, playPulseFire, playCascadeSound, playTriplePulseSound, playArcSound,
   playArcBladeSound, playArcBladeReturnSound,
+  playMolotovThrowSound, playMolotovLandSound,
   playNovaDetonationSound,
   playFrenzySound,
   playHit, playEnemyDeath, playPlayerHit, playDodge,
@@ -241,6 +242,10 @@ export class Game {
     this.P._splitDrones = [];
     this.P._dr = null;
     this.P._lanceCounter = 0;
+    this.P._molotovTimer = 0;
+    this.P._firePools = [];
+    this.P._bottles = [];
+    this.P._pendingBottles = [];
     this.camX = 0;
     this.camY = 0;
     this.initBackground();
@@ -418,6 +423,9 @@ export class Game {
     this._fireWeapons(dt);
     if (getWeaponLevel(P, 'arcblade')) {
       this.updateArcBlade(dt);
+    }
+    if (getWeaponLevel(P, 'molotov')) {
+      this.updateMolotov(dt);
     }
     this.updateTripleWaves(dt);
     this.updatePendingCascades(dt);
@@ -762,6 +770,273 @@ export class Game {
       });
       pruneEnemies();
       return !stopOnHit;
+    });
+  }
+
+  updateMolotov(dt) {
+    const P = this.P;
+    P._pendingBottles ||= [];
+    const molotovLvl = getWeaponLevel(P, 'molotov');
+    if (!molotovLvl) return;
+    const tier = MOLOTOV_TIERS[molotovLvl];
+    if (!tier) return;
+
+    P._molotovTimer -= dt;
+    if (P._molotovTimer <= 0) {
+      const fireRate = P.ascensions.molotov === 'inferno'
+        ? tier.fireRate * 2.0
+        : tier.fireRate;
+      P._molotovTimer = fireRate * (1 / (P.rateBonus || 1));
+      this.throwMolotov(tier);
+    }
+
+    P._bottles = P._bottles.filter(b => {
+      if (b.justCreated) {
+        b.justCreated = false;
+        return true;
+      }
+
+      b.t += dt / b.flightTime;
+      const lx = b.targetX - b.startX;
+      const ly = b.targetY - b.startY;
+      b.x = b.startX + lx * b.t;
+      b.y = b.startY + ly * b.t - Math.sin(b.t * Math.PI) * b.arcHeight;
+
+      b.trail ||= [];
+      b.trail.push({ x: b.x, y: b.y });
+      if (b.trail.length > 8) b.trail.shift();
+
+      if (b.t >= 1) {
+        this.landMolotov(b);
+        return false;
+      }
+      return true;
+    });
+
+    if (P._pendingBottles.length > 0) {
+      P._bottles.push(...P._pendingBottles);
+      P._pendingBottles = [];
+    }
+
+    P._firePools = P._firePools.filter(pool => {
+      pool.life -= dt;
+      if (pool.life <= 0) return false;
+
+      pool.dmgTimer = (pool.dmgTimer || 0) - dt;
+      if (pool.dmgTimer <= 0) {
+        pool.dmgTimer = 0.1;
+        const dmg = P.dmg * pool.dmgMult * 0.1;
+        enemies.forEach(e => {
+          if (Math.hypot(e.x - pool.x, e.y - pool.y) < pool.r + e.r) {
+            this.hitEnemy(e, dmg, '#FF2D9B');
+          }
+        });
+        pruneEnemies();
+      }
+      return true;
+    });
+
+  }
+
+  throwMolotov(tier) {
+    const P = this.P;
+    const primaryTarget = nearest(P);
+    const baseAngle = primaryTarget
+      ? Math.atan2(primaryTarget.y - P.y, primaryTarget.x - P.x)
+      : 0;
+    const primaryEnemyAngle = primaryTarget
+      ? Math.atan2(P.y - primaryTarget.y, P.x - primaryTarget.x)
+      : baseAngle;
+    const primaryPredictDist = primaryTarget ? (primaryTarget.spd || 60) * 0.5 * 0.7 : 0;
+    const primaryPredictX = primaryTarget
+      ? primaryTarget.x - Math.cos(primaryEnemyAngle) * primaryPredictDist
+      : P.x + Math.cos(baseAngle) * 200;
+    const primaryPredictY = primaryTarget
+      ? primaryTarget.y - Math.sin(primaryEnemyAngle) * primaryPredictDist
+      : P.y + Math.sin(baseAngle) * 200;
+    const angle = Math.atan2(primaryPredictY - P.y, primaryPredictX - P.x);
+    const dist = primaryTarget
+      ? Math.min(Math.hypot(primaryPredictX - P.x, primaryPredictY - P.y) + 30, 350)
+      : 200;
+
+    if (P.ascensions.molotov === 'inferno') {
+      const infernoRadius = tier.radius * 1.8;
+      const targetX = P.x + Math.cos(angle) * dist;
+      const targetY = P.y + Math.sin(angle) * dist;
+      P._bottles.push({
+        startX: P.x,
+        startY: P.y,
+        targetX,
+        targetY,
+        x: P.x,
+        y: P.y,
+        t: 0,
+        flightTime: 0.5,
+        arcHeight: 100,
+        trail: [],
+        dmgMult: tier.dmgMult * 1.5,
+        radius: infernoRadius,
+        duration: 8.0,
+        isBounce: false,
+        isCluster: false,
+        bounceCount: 0,
+        isInferno: true,
+        justCreated: true,
+      });
+      playMolotovThrowSound();
+      return;
+    }
+
+    const poolCount = tier.pools;
+    const sectorAngles = poolCount === 1
+      ? [baseAngle]
+      : poolCount === 2
+        ? [baseAngle - Math.PI / 3, baseAngle + Math.PI / 3]
+        : [baseAngle - Math.PI * 2 / 3, baseAngle, baseAngle + Math.PI * 2 / 3];
+    const sectorHalfWidth = Math.PI / 3;
+
+    sectorAngles.forEach(sectorCentre => {
+      let sectorTarget = null;
+      let sectorDist = Infinity;
+      enemies.forEach(e => {
+        const eAngle = Math.atan2(e.y - P.y, e.x - P.x);
+        let angleDiff = eAngle - sectorCentre;
+        while (angleDiff > Math.PI) angleDiff -= Math.PI * 2;
+        while (angleDiff < -Math.PI) angleDiff += Math.PI * 2;
+        if (Math.abs(angleDiff) <= sectorHalfWidth) {
+          const d = Math.hypot(e.x - P.x, e.y - P.y);
+          if (d < sectorDist) {
+            sectorDist = d;
+            sectorTarget = e;
+          }
+        }
+      });
+
+      const throwAngle = sectorTarget
+        ? Math.atan2(sectorTarget.y - P.y, sectorTarget.x - P.x)
+        : sectorCentre;
+      const throwDist = sectorTarget
+        ? Math.min(Math.hypot(sectorTarget.x - P.x, sectorTarget.y - P.y) + 30, 350)
+        : 200;
+      const predictDist = sectorTarget ? (sectorTarget.spd || 60) * 0.5 * 0.7 : 0;
+      const enemyMoveAngle = sectorTarget
+        ? Math.atan2(P.y - sectorTarget.y, P.x - sectorTarget.x)
+        : throwAngle + Math.PI;
+      const targetX = P.x + Math.cos(throwAngle) * throwDist
+        - Math.cos(enemyMoveAngle) * predictDist;
+      const targetY = P.y + Math.sin(throwAngle) * throwDist
+        - Math.sin(enemyMoveAngle) * predictDist;
+
+      P._bottles.push({
+        startX: P.x,
+        startY: P.y,
+        targetX,
+        targetY,
+        x: P.x,
+        y: P.y,
+        t: 0,
+        flightTime: 0.5,
+        arcHeight: 80,
+        trail: [],
+        tier,
+        dmgMult: tier.dmgMult,
+        radius: tier.radius,
+        duration: tier.duration,
+        isBounce: P.ascensions.molotov === 'bouncing_cocktail',
+        isCluster: P.ascensions.molotov === 'cluster_molotov',
+        bounceCount: 0,
+        justCreated: true,
+      });
+    });
+
+    playMolotovThrowSound();
+  }
+
+  landMolotov(bottle) {
+    const P = this.P;
+    P._pendingBottles ||= [];
+    const landedX = bottle.targetX;
+    const landedY = bottle.targetY;
+
+    if (bottle.isCluster) {
+      const subAngles = [-0.7, 0, 0.7];
+      this.createFirePool(landedX, landedY, bottle.radius, bottle.duration, bottle.dmgMult, bottle.isInferno === true);
+      subAngles.forEach(offset => {
+        const subDist = 150 + Math.random() * 60;
+        const baseAngle = Math.atan2(
+          landedY - bottle.startY,
+          landedX - bottle.startX
+        ) + offset;
+        const targetX = landedX + Math.cos(baseAngle) * subDist;
+        const targetY = landedY + Math.sin(baseAngle) * subDist;
+        P._pendingBottles.push({
+          startX: landedX,
+          startY: landedY,
+          targetX,
+          targetY,
+          x: landedX,
+          y: landedY,
+          t: 0,
+          flightTime: 0.5,
+          arcHeight: 60,
+          trail: [],
+          tier: bottle.tier,
+          dmgMult: bottle.dmgMult,
+          radius: bottle.radius * 0.8,
+          duration: bottle.duration,
+          isBounce: false,
+          isCluster: false,
+          bounceCount: 0,
+          isSub: true,
+          justCreated: true,
+        });
+      });
+    } else if (bottle.isBounce && bottle.bounceCount < 3) {
+      this.createFirePool(
+        landedX,
+        landedY,
+        85,
+        bottle.duration,
+        bottle.dmgMult,
+        false
+      );
+      const bounceAngle = Math.atan2(
+        landedY - bottle.startY,
+        landedX - bottle.startX
+      ) + (Math.random() - 0.5) * 0.6;
+      const bounceDist = 140 - bottle.bounceCount * 20;
+      P._pendingBottles.push({
+        ...bottle,
+        startX: landedX,
+        startY: landedY,
+        targetX: landedX + Math.cos(bounceAngle) * bounceDist,
+        targetY: landedY + Math.sin(bounceAngle) * bounceDist,
+        x: landedX,
+        y: landedY,
+        t: 0,
+        flightTime: 0.25,
+        arcHeight: 40 - bottle.bounceCount * 10,
+        trail: [],
+        bounceCount: bottle.bounceCount + 1,
+        justCreated: true,
+      });
+    } else {
+      this.createFirePool(landedX, landedY, bottle.radius, bottle.duration, bottle.dmgMult, bottle.isInferno === true);
+    }
+
+    addBurst(landedX, landedY, '#FF2D9B', 10, 80, 3, 0.4);
+    addRing(landedX, landedY, bottle.radius * 0.5, '#FF2D9B', 2, 0.3);
+    playMolotovLandSound();
+  }
+
+  createFirePool(x, y, r, duration, dmgMult, isInferno = false) {
+    this.P._firePools.push({
+      x, y, r,
+      life: duration,
+      maxLife: duration,
+      dmgMult,
+      dmgTimer: 0,
+      isInferno,
     });
   }
 
@@ -1844,7 +2119,7 @@ export class Game {
     e.hp -= dmg;
     if (e.hp <= 0.001) e.hp = 0;
     e.hitFlash = 0.1;
-    const numCol = isSynergy ? '#FFB627' : col === '#00CFFF' ? '#00CFFF' : col === '#BF77FF' ? '#BF77FF' : '#fff';
+    const numCol = isSynergy ? '#FFB627' : col === '#00CFFF' ? '#00CFFF' : col === '#BF77FF' ? '#BF77FF' : col === '#FF2D9B' ? '#FF2D9B' : '#fff';
     if (!silent && dmg > 0) this.addDN(e.x, e.y - e.r, Math.round(dmg), numCol, 0.7, isSynergy);
     if (!silent) addBurst(e.x, e.y, col, isSynergy ? 6 : 3, isSynergy ? 90 : 60, 2.5, 0.32);
     if (!silent) {
@@ -2961,6 +3236,101 @@ export class Game {
       });
   }
 
+  drawMolotov() {
+    const { ctx } = this;
+    const P = this.P;
+    if (!getWeaponLevel(P, 'molotov')) return;
+
+    P._firePools.forEach(pool => {
+      const lifeRatio = pool.life / pool.maxLife;
+      const alpha = lifeRatio * 0.45;
+      const outerBlur = pool.isInferno ? 25 : 15;
+      const innerCol = pool.isInferno ? '#FFFFFF' : '#FF88CC';
+
+      ctx.globalAlpha = alpha * 0.4;
+      ctx.fillStyle = '#FF2D9B';
+      ctx.shadowColor = '#FF2D9B';
+      ctx.shadowBlur = outerBlur;
+      ctx.beginPath();
+      ctx.arc(pool.x, pool.y, pool.r, 0, Math.PI * 2);
+      ctx.fill();
+
+      ctx.globalAlpha = alpha * 0.7;
+      ctx.fillStyle = innerCol;
+      ctx.shadowBlur = 8;
+      ctx.beginPath();
+      ctx.arc(pool.x, pool.y, pool.r * 0.5, 0, Math.PI * 2);
+      ctx.fill();
+
+      ctx.globalAlpha = lifeRatio * 0.8;
+      ctx.strokeStyle = '#FF2D9B';
+      ctx.lineWidth = 2;
+      ctx.shadowBlur = 12;
+      if (pool.isInferno) {
+        ctx.save();
+        ctx.translate(pool.x, pool.y);
+        ctx.rotate(this.gt * 0.5);
+        ctx.beginPath();
+        ctx.ellipse(0, 0, pool.r, Math.max(12, pool.r * 0.84), 0, 0, Math.PI * 2);
+        ctx.stroke();
+        ctx.restore();
+      } else {
+        ctx.beginPath();
+        ctx.arc(pool.x, pool.y, pool.r, 0, Math.PI * 2);
+        ctx.stroke();
+      }
+
+      ctx.shadowBlur = 0;
+      ctx.globalAlpha = 1;
+
+      if (Math.random() < 0.3) {
+        const angle = Math.random() * Math.PI * 2;
+        const radius = Math.random() * pool.r;
+        this._spawnMolotovFireParticle(
+          pool.x + Math.cos(angle) * radius,
+          pool.y + Math.sin(angle) * radius
+        );
+      }
+    });
+
+    P._bottles.forEach(bottle => {
+      bottle.trail?.forEach((pos, i) => {
+        ctx.globalAlpha = (i / bottle.trail.length) * 0.4;
+        ctx.fillStyle = '#FF2D9B';
+        ctx.beginPath();
+        ctx.arc(pos.x, pos.y, 3, 0, Math.PI * 2);
+        ctx.fill();
+      });
+      ctx.globalAlpha = 1;
+
+      ctx.shadowColor = '#FFFFFF';
+      ctx.shadowBlur = 10;
+      ctx.fillStyle = '#FF2D9B';
+      ctx.beginPath();
+      ctx.arc(bottle.x, bottle.y, 6, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.fillStyle = '#FFFFFF';
+      ctx.beginPath();
+      ctx.arc(bottle.x - 1.5, bottle.y - 1.5, 2, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.shadowBlur = 0;
+    });
+  }
+
+  _spawnMolotovFireParticle(x, y) {
+    particles.push({
+      tp: 'dot',
+      x,
+      y,
+      vy: -30 - Math.random() * 20,
+      vx: (Math.random() - 0.5) * 20,
+      r: 2 + Math.random() * 2,
+      col: Math.random() < 0.5 ? '#FF2D9B' : '#FFFFFF',
+      life: 0.4,
+      lt: 0.4,
+    });
+  }
+
   drawBullets(ultraMode) {
     const { ctx } = this;
     bullets.filter(b => b.enemy).forEach(b => {
@@ -3373,6 +3743,7 @@ export class Game {
     this.drawSawBlade();
     drawBoss(ctx, this.boss);
     this.drawLeechShields();
+    this.drawMolotov();
     this.drawEnemies(perfMode);
     this.drawBullets(ultraMode);
     this.drawPlayer();
@@ -3491,11 +3862,13 @@ export class Game {
 function wStats(wid, lvl, p) {
   const rb = p.rateBonus || 1;
   const empScaling = EMP_SCALING[Math.min(Math.max(lvl, 1), 5)] || EMP_SCALING[1];
+  const molotovTier = MOLOTOV_TIERS[Math.min(Math.max(lvl, 1), 5)] || MOLOTOV_TIERS[1];
   const rates = {
     cryo: (1.9 + lvl * 0.35) * rb,
     pulse: 0.45 * rb,
     emp: 0.4 * rb,
     swarm: 0,
+    molotov: 1 / (molotovTier.fireRate * (1 / rb)),
     barrier: 0,
   };
   const r = (rates[wid] || 0).toFixed(1);
@@ -3503,6 +3876,7 @@ function wStats(wid, lvl, p) {
   if (wid === 'pulse') return [`Rate: ${r}/s`, `Dmg: ${Math.round(p.dmg * (28 + lvl * 10))}`, 'Impact: heavy explosive shot', lvl >= 2 ? 'Cluster: splits on impact' : 'Cooldown: long', lvl >= 5 ? 'Cluster: four split layers' : lvl >= 4 ? 'Cluster: three split layers' : lvl >= 3 ? 'Cluster: bomblets split again' : ''];
   if (wid === 'emp') return [`Rate: ${r}/s`, `Radius: ${empScaling.radius}px`, `Stun: ${empScaling.stun.toFixed(1)}s`, `Dmg mult: x${empScaling.dmgMult.toFixed(1)}`];
   if (wid === 'swarm') return [`Drones: ${Math.min(6, 1 + lvl)}`, `Dmg/hit: ${Math.round(p.dmg * (28 + lvl * 14))}`, 'Orbit: auto-seek', lvl >= 2 ? 'Upgrade: +1 drone' : ''];
+  if (wid === 'molotov') return [`Rate: ${r}/s`, `Pools: ${molotovTier.pools}`, `Radius: ${molotovTier.radius}px`, `Duration: ${molotovTier.duration.toFixed(1)}s`, `Dmg mult: x${molotovTier.dmgMult}`];
   if (wid === 'barrier') {
     const tier = WDEFS.barrier.tiers[Math.min(lvl, 5)];
     return [`Rate: ${r}/s`, `Absorb: ${tier.maxCap} dmg`, `Active: ${tier.activeDuration}s`, `Recharge: ${tier.rechargeTime}s`];
@@ -3539,6 +3913,13 @@ function wDesc(wid, lvl) {
       3: 'Adds a fourth orbiting swarm drone.',
       4: 'Adds a fifth orbiting swarm drone.',
       5: 'Adds a sixth orbiting swarm drone.'
+    },
+    molotov: {
+      1: 'Throws a Molotov toward the nearest enemy, creating one burning pool that deals continuous damage over time.',
+      2: 'The fire pool grows wider and burns harder while keeping a single throw target.',
+      3: 'Throws two bottles in a fan, creating two separate fire pools on landing.',
+      4: 'Those two pools grow larger and burn longer between throws.',
+      5: 'Throws three bottles in a wider fan, covering a broad zone in overlapping fire.'
     },
     barrier: {
       1: 'Absorbs 40 damage per cycle. Active 4.2s, recharge 8s.',
@@ -3584,6 +3965,7 @@ function weaponUnlockDesc(wid) {
     pulse: 'Launches a heavy explosive Pulse shell that upgrades into cluster-bomb bursts.',
     emp: 'Sends a radial EMP stun that upgrades mostly through larger and larger control radius.',
     swarm: 'Deploys orbiting drones that keep scaling by adding more swarm bodies.',
+    molotov: 'Lobs arcing bottles that burst into persistent fire pools for area denial and damage-over-time.',
     barrier: 'Wraps the player in a cycling shield that absorbs damage, then recharges after breaking.',
     arcblade: 'Throws orbiting boomerang blades that loop out and back around the player.'
   }[wid] || 'Unlocks a new weapon.');

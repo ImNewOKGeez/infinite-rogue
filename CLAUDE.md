@@ -21,7 +21,7 @@ Infinite Rogue is a mobile-first cyberpunk survivor roguelite inspired by Magic 
 ## Session startup checklist
 - What is the game? Mobile-first endless survivor roguelite with auto-attacks, aggressive wave pressure, weapon drafting, and score-by-survival-time.
 - What matters most? Discovery, fast starts, readable combat, distinct weapon identities, and future expandability.
-- What is in code today? Three playable characters, six weapons, four weapon slots per run, six generic passives, a scrolling world camera, surge events, a three-phase recurring boss, heal-orb sustain, records, persistent synergy discovery tracking, menu/death/records overlays, a playtest lab, joystick input, procedural audio, clean run-start resets, and Capacitor Android packaging.
+- What is in code today? Three playable characters, seven weapons, four weapon slots per run, six generic passives, a scrolling world camera, surge events, a three-phase recurring boss, heal-orb sustain, records, persistent synergy discovery tracking, menu/death/records overlays, a playtest lab, joystick input, procedural audio, clean run-start resets, and Capacitor Android packaging.
 - What is not settled yet? Final weapon depth direction, freeze/boss tuning after the reactivated meter system, broader progression/codex shape, unlock flow, and long-term content scale.
 - What must not happen? No permanent stat grind, no tutorial-heavy hand-holding, and no architecture that makes new content expensive to add.
 
@@ -142,7 +142,7 @@ Broad by intent. The game should be readable for casual players and strategicall
 - Canvas-based core gameplay loop with keyboard plus virtual joystick support.
 - Scrolling `3000 x 3000` world with player-follow camera, world-edge clamping, and boundary-pressure feedback.
 - Three playable characters: Ghost, Bruiser, Hacker.
-- Six total weapons in the pool, but only four weapon slots can be owned in a run.
+- Seven total weapons in the pool, but only four weapon slots can be owned in a run.
 - Weapon upgrades currently run from level 1 to level 5.
 - Six run-wide passive upgrades.
 - XP gems with magnet pickup behavior and merge logic.
@@ -150,7 +150,7 @@ Broad by intent. The game should be readable for casual players and strategicall
 - Surge events every 40 seconds outside boss flow, with `Game.surgeCount` expanding the enemy roster after each surge completes.
 - Six live enemy types in the normal pool: Runner, Shooter, Brute, Titan, Juggernaut, and Shield Leech.
 - Recurring three-phase boss with warning, intro, boss bar, phase announcements, and post-kill reward draft.
-- Level-up-pool weapon Ascension draft injection for eligible level-5 weapons, with live pools for Cryo, Pulse, EMP, Swarm, and Arc Blade.
+- Level-up-pool weapon Ascension draft injection for eligible level-5 weapons, with live pools for Cryo, Pulse, EMP, Swarm, Arc Blade, and Molotov.
 - Death screen with run stats, equipped weapons, and run synergies.
 - Save-backed records screen with global and per-character bests.
 - Persistent synergy discovery tracking with first-discovery pause overlay.
@@ -214,6 +214,7 @@ The live weapon system is simple and numeric right now:
 | EMP | `#BF77FF` | Radial control / scaling burst | Expanding stun burst with pure per-level scaling in radius, stun duration, and damage multiplier |
 | Swarm | `#1DFFD0` | Persistent seek damage | Orbiting drones that seek targets; levels mainly add more drones |
 | Arc Blade | `#FF2D9B` | Orbiting boomerang pressure | `JAC'S BOOMERANG`; orbiting return-path blades managed in `game.js`, with a saw blade Ascension |
+| Molotov | `#FF2D9B` | Ground denial / damage-over-time zoning | `LUKE'S MOLOTOV`; arcing bottles land in persistent fire pools managed in `game.js` |
 | Barrier | `#C6FF00` | Defensive sustain | Cycling absorb shield with recharge and heal refund based on absorbed damage |
 
 ### Live per-weapon detail
@@ -267,6 +268,17 @@ The live weapon system is simple and numeric right now:
 - Current implementation note: Arc Blade has a live Ascension pool entry but only one option right now.
 - `ASCENSIONS.arcblade` currently defines `saw_blade`.
 
+#### Molotov
+- Display name: `LUKE'S MOLOTOV`.
+- Level 1: 1 pool, 55px radius, 2.5s duration, 2.5s fire rate, x8 damage multiplier.
+- Level 2: 1 pool, 70px radius, 2.5s duration, 2.2s fire rate, x9 damage multiplier.
+- Level 3: 2 bottles in a fan, 80px pools, 3.0s duration, 2.0s fire rate, x10 damage multiplier.
+- Level 4: 2 bottles in a fan, 90px pools, 3.0s duration, 1.8s fire rate, x11 damage multiplier.
+- Level 5: 3 bottles in a fan, 100px pools, 3.0s duration, 1.6s fire rate, x12 damage multiplier.
+- Live behavior: bottles use sector-based targeting, lead enemies slightly so pools land ahead of their path, land in persistent fire pools, and deal continuous damage over time to enemies inside them.
+- `inferno`: throws one oversized bottle regardless of level count, creates one pool with radius `tier.radius * 1.8`, lasts 8 seconds, deals 50% more damage, and fires at half the normal cadence (`tier.fireRate * 2.0`).
+- `ASCENSIONS.molotov` currently defines `inferno`, `bouncing_cocktail`, and `cluster_molotov`.
+
 #### Barrier
 - Level 1: absorb 40, active 4.2s, recharge 8s.
 - Level 2: absorb 65, active 5.1s, recharge 7s.
@@ -303,6 +315,7 @@ The live weapon system is simple and numeric right now:
 - EMP: `cascade_pulse`, `triple_pulse`, `arc_discharge`
 - Swarm: `nova_swarm`, `frenzy`, `split_swarm`
 - Arc Blade: `saw_blade`
+- Molotov: `inferno`, `bouncing_cocktail`, `cluster_molotov`
 
 ## Current synergies and progression layer
 
@@ -384,6 +397,7 @@ The live weapon system is simple and numeric right now:
 - Swarm state: `_dr`, `_novaDrones`, `_splitDrones`
 - Arc Blade state: `_arcDiscs`, `_sawBlade`
 - Cryo state: `_lanceCounter`
+- Molotov state: `_molotovTimer`, `_firePools`, `_bottles`
 - Pulse state: `_pulseOverloadCounter`, `_pulseMines`
 - Progression: `level`, `xp`, `xpNext`, `invT`
 - HUD / feedback state: `hurtFlash`, `barrierHealFrom`, `barrierHealTo`, `barrierHealT`, `barrierHealImpactT`
@@ -454,7 +468,7 @@ src/
   main.js        - app entry, loads save and starts Game
   constants.js   - world dimensions and boundary-warning constants
   progression.js - save schema, records, synergy persistence
-  game.js        - core loop, world camera, menus, overlays, playtest lab, run flow, combat orchestration
+  game.js        - core loop, world camera, menus, overlays, playtest lab, run flow, combat orchestration, and Molotov runtime (`updateMolotov`, `throwMolotov`, `landMolotov`, `createFirePool`, `drawMolotov`)
   player.js      - character roster, player factory, weapon-state helpers
   weapons.js     - weapon defs, bullets, ascension defs, cryo ascension hooks, pulse clusters, and shield logic hooks
   enemies.js     - enemy roster, surge-based spawn logic, targeting/status helpers, freeze-state updates, and freeze spread
@@ -522,6 +536,11 @@ src/
 5. Keep moving gameplay systems toward easier future content addition.
 
 ## Changelog
+- 2026-04-13: Fixed Molotov's same-frame processing bug by marking newly created main, bounce, cluster, and Inferno bottles as `justCreated` and skipping their first update pass, preventing frame-spike drops while keeping T3/T5 multi-bottle throws and follow-up bottles stable.
+- 2026-04-12: Tuned Molotov follow-up spacing so Bouncing Cocktail now creates three uniform 85px pools across wider 140/120/100px hops, widened Cluster Molotov sub-bottle landing spread to 150-210px, and tightened the sector-throw fallback so multi-bottle tiers always launch their full bottle count even into empty sectors.
+- 2026-04-12: Refined Molotov follow-up behavior by confirming bounce/cluster positions in world space, increasing cluster sub-bottle readability (`0.5s` flight, `60px` arc, `0.8x` radius), and retuning `INFERNO` to `tier.radius * 1.8`, 8-second duration, half-rate throws, and a more distinct render treatment.
+- 2026-04-12: Reworked Molotov targeting to lead enemies with sector-based bottle selection, simplified `INFERNO` into a single oversized bottle/pool with no merge logic, and validated bounce/cluster branch execution before removing the temporary logs.
+- 2026-04-12: Added `LUKE'S MOLOTOV` as a seventh weapon with arcing bottle throws, persistent fire pools, Molotov Ascensions (`INFERNO`, `BOUNCING COCKTAIL`, `CLUSTER MOLOTOV`), dedicated throw/land audio, explicit player/new-run state resets, and updated documentation for the new runtime helpers.
 - 2026-04-12: Completed an audit-and-cleanup reconciliation pass with no gameplay changes: removed dead helper exports and stale debug logging, added an explicit particle reset on `newRun()`, aligned live Ascension text with implementation, cleaned unused asset/temp files, and updated this brief to match the current runtime state and file map.
 - 2026-04-12: Simplified Permafrost visuals down to a darker blue frozen body plus one clean ring, shortened Cryo Nova's white/cyan pulse rings, changed Glacial Lance from a 6-second timer to an every-third-shot counter with a 5-beam level-5 release and HUD dots, raised Frost Field chip damage to `P.dmg * 5` per second while confirming dashed-line resets, and removed Shatter screen flash entirely.
 - 2026-04-12: Upgraded Cryo Ascensions by brightening Cryo Storm shards plus trigger audio, making Permafrost enemies much louder visually, buffing Cryo Nova into a high-damage 150px detonation that seeds more freeze, redesigning Glacial Lance into a 6-second charged piercing shot while preserving normal Cryo fire, fixing Frost Field to slow first and freeze after sustained exposure while adding minimal chip damage, and capping Shatter flash cadence for readability.
