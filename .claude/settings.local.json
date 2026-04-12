@@ -1,0 +1,8 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(node -e \"const fs=require\\('fs'\\); const s=fs.readFileSync\\('src/weapons.js','utf8'\\); const i=s.indexOf\\('baseRate: 1.9'\\); console.log\\(JSON.stringify\\(s.slice\\(i-100,i+20\\)\\)\\);\")",
+      "Bash(node -e ':*)"
+    ]
+  }
+}
