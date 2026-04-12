@@ -6,8 +6,8 @@ export const BOSS_SPAWN_TIME = 120; // 2 minutes
 export const BOSS_RESPAWN_DELAY = 90;
 
 const BASE_HP = 3000;
-const CONTACT_DAMAGE_MULT = 1.4;
-const PROJECTILE_DAMAGE_MULT = 1.4;
+const CONTACT_DAMAGE_MULT = 2.1;
+const PROJECTILE_DAMAGE_MULT = 1.96;
 const SPEED_MULT = 1.25;
 const PHASE_TWO_THRESHOLD = 0.68;
 const PHASE_THREE_THRESHOLD = 0.33;
@@ -37,7 +37,7 @@ const PHASE_TUNING = {
     shotArc: 0.15,
     spiralCd: 1.95,
     spiralArms: 4,
-    chargeCd: 7,
+    chargeCd: 6,
   },
   3: {
     lookAhead: 0.78,
@@ -53,16 +53,16 @@ const PHASE_TUNING = {
     spiralArms: 5,
     chargeCd: 4.5,
     mineCd: 2.45,
-    mineCount: 5,
-    barrageCd: 10,
-    barrageShots: 18,
+    mineCount: 10,
+    barrageCd: 9,
+    barrageShots: 20,
   },
 };
 
 export function mkBoss(gt, player, viewH, worldW = WORLD_W, worldH = WORLD_H) {
   const cycleScale = 1 + Math.floor(gt / 180) * 0.25;
   const baseHp = Math.round(BASE_HP * cycleScale);
-  const hpScale = Math.max(1, gt / 120);
+  const hpScale = 1 + gt / 80;
   const scaledHp = Math.round(baseHp * hpScale);
   const margin = 34 + 8;
   const spawnDist = viewH * 0.4;
@@ -99,8 +99,6 @@ export function mkBoss(gt, player, viewH, worldW = WORLD_W, worldH = WORLD_H) {
     chargeHit: false,
     transitionT: 0,
     transitionFlash: 0,
-    transitionShockT: 0,
-    transitionShockDur: 1.05,
     hitFlash: 0,
     isBoss: true,
     frozen: false,
@@ -130,7 +128,6 @@ export function updateBoss(boss, P, dt, handlers) {
     onHitPlayer,
     onSpawnBullet,
     onPhaseChange,
-    onTransitionTax,
     onClearEnemyBullets,
   } = handlers;
 
@@ -138,7 +135,6 @@ export function updateBoss(boss, P, dt, handlers) {
   boss.angle += dt * (boss.phase === 3 ? 5.1 : boss.phase === 2 ? 3.9 : 2.2);
   if (boss.hitFlash > 0) boss.hitFlash -= dt;
   if (boss.transitionFlash > 0) boss.transitionFlash -= dt;
-  if (boss.transitionShockT > 0) boss.transitionShockT -= dt;
   if (boss.empMarkT > 0) boss.empMarkT -= dt;
 
   if (boss.frozen) {
@@ -165,9 +161,9 @@ export function updateBoss(boss, P, dt, handlers) {
   }
 
   if (boss.phase === 1 && boss.hp <= boss.maxHp * PHASE_TWO_THRESHOLD) {
-    beginPhaseTransition(boss, 2, P, onClearEnemyBullets, onTransitionTax, onPhaseChange);
+    beginPhaseTransition(boss, 2, P, onClearEnemyBullets, onPhaseChange);
   } else if (boss.phase === 2 && boss.hp <= boss.maxHp * PHASE_THREE_THRESHOLD) {
-    beginPhaseTransition(boss, 3, P, onClearEnemyBullets, onTransitionTax, onPhaseChange);
+    beginPhaseTransition(boss, 3, P, onClearEnemyBullets, onPhaseChange);
   }
 
   if (boss.transitionT > 0) {
@@ -220,19 +216,6 @@ export function drawBoss(ctx, boss) {
     : boss.phase === 3 ? '#8A2BE2'
     : boss.phase === 2 ? '#D4537E'
     : '#E24B4A';
-
-  if (boss.transitionShockT > 0) {
-    const progress = 1 - boss.transitionShockT / boss.transitionShockDur;
-    const maxR = Math.sqrt(boss.arenaW ** 2 + boss.arenaH ** 2);
-    const shockR = Math.max(24, maxR * progress);
-    ctx.save();
-    ctx.strokeStyle = `rgba(255,255,255,${0.95 - progress * 0.55})`;
-    ctx.lineWidth = 10 - progress * 4;
-    ctx.beginPath();
-    ctx.arc(boss.x, boss.y, shockR, 0, Math.PI * 2);
-    ctx.stroke();
-    ctx.restore();
-  }
 
   ctx.shadowColor = col;
   ctx.shadowBlur = boss.phase === 3 ? 40 : boss.phase === 2 ? 30 : 20;
@@ -314,11 +297,10 @@ export function hitBoss(boss, dmg, col, isSynergy = false) {
   addBurst(boss.x, boss.y, col, isSynergy ? 5 : 2, isSynergy ? 80 : 50, 3, 0.28);
 }
 
-function beginPhaseTransition(boss, nextPhase, P, onClearEnemyBullets, onTransitionTax, onPhaseChange) {
+function beginPhaseTransition(boss, nextPhase, P, onClearEnemyBullets, onPhaseChange) {
   applyPhaseState(boss, nextPhase);
   boss.transitionT = TRANSITION_DURATION;
   boss.transitionFlash = TRANSITION_DURATION;
-  boss.transitionShockT = boss.transitionShockDur;
   boss.charging = false;
   boss.chargeWindupT = 0;
   boss.shootWindupT = 0;
@@ -333,7 +315,6 @@ function beginPhaseTransition(boss, nextPhase, P, onClearEnemyBullets, onTransit
   addBurst(boss.x, boss.y, '#ffffff', 28, 220, 7, 0.9);
   addRing(boss.x, boss.y, 180, '#ffffff', 4.5, 0.9);
   addRing(boss.x, boss.y, 240, boss.col, 3, 0.75);
-  onTransitionTax();
   teleportOppositePlayer(boss, P);
   onPhaseChange();
 }
@@ -365,7 +346,7 @@ function tickChargePrep(boss, P, dt) {
   boss.chargeT -= dt;
   if (boss.chargeT > 0) return;
   boss.chargeT = PHASE_TUNING[boss.phase].chargeCd;
-  boss.chargeWindupT = 0.6;
+  boss.chargeWindupT = boss.phase === 2 ? 0.4 : 0.6;
   boss.chargeTargetX = P.x;
   boss.chargeTargetY = P.y;
   boss.chargeDir = Math.atan2(P.y - boss.y, P.x - boss.x);
@@ -378,7 +359,7 @@ function launchCharge(boss) {
   boss.charging = true;
   boss.chargeHit = false;
   const dir = Math.atan2(boss.chargeTargetY - boss.y, boss.chargeTargetX - boss.x);
-  const speed = boss.phase === 3 ? 760 : 640;
+  const speed = boss.phase === 3 ? 760 : 800;
   boss.chargeDir = dir;
   boss.chargeVx = Math.cos(dir) * speed;
   boss.chargeVy = Math.sin(dir) * speed;
@@ -520,8 +501,8 @@ function tickMines(boss, dt, onSpawnBullet) {
     onSpawnBullet(
       boss.x + Math.cos(a) * 18,
       boss.y + Math.sin(a) * 18,
-      Math.cos(a) * (95 * 1.25),
-      Math.sin(a) * (95 * 1.25),
+      Math.cos(a) * (95 * 1.625),
+      Math.sin(a) * (95 * 1.625),
       9,
       20 * PROJECTILE_DAMAGE_MULT,
       '#8A2BE2',

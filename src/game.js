@@ -1,9 +1,9 @@
 import { initHUD, updateHUD, showOverlay, hideOverlay, setSurge, setBossBar, showDiscoveryOverlay, showRecordsScreen, showAscensionDraft } from './hud.js';
 import { initInput, initJoystick, jDir } from './input.js';
-import { CHARACTERS, addWeapon, getAscension, getOwnedWeaponIds, getWeaponLevel, hasAscension, mkPlayer } from './player.js';
-import { enemies, resetEnemies, spawnEnemy, pruneEnemies, dist2, nearest, setExtraTarget, clearExtraTarget, tickEnemyStatus, updateEnemyFreezeState } from './enemies.js';
+import { CHARACTERS, addWeapon, getAscension, getOwnedWeaponIds, getWeaponLevel, hasAscension, mkPlayer, mkWeaponState } from './player.js';
+import { enemies, resetEnemies, spawnEnemy, pruneEnemies, dist2, nearest, setExtraTarget, clearExtraTarget, tickEnemyStatus, updateEnemyFreezeState, applyStun, applySlow, applyKnockback, getEffectiveFreezeThreshold } from './enemies.js';
 import { ASCENSIONS, EMP_SCALING, WDEFS, bullets, resetBullets, resetPulseClusters, handleCryoImpact, updateCryoFields, getPulseHitDamage, triggerPulseExplosion, spawnBullet, applyFreezeMeter, spawnPulseClusters } from './weapons.js';
-import { PASSIVES, buildPool, applyUpgrade, buildAscensionPool, applyAscension } from './upgrades.js';
+import { PASSIVES, buildPool, applyUpgrade, applyAscension } from './upgrades.js';
 import { updateParticles, addRing, addBurst, addDot, addArc, drawParticles } from './particles.js';
 import { mkBoss, updateBoss, drawBoss, hitBoss, BOSS_SPAWN_TIME, BOSS_RESPAWN_DELAY } from './boss.js';
 import { SYNERGIES, recordDiscovery, recordRun } from './progression.js';
@@ -38,6 +38,30 @@ function traceEnemyShape(ctx, e) {
     ctx.lineTo(e.x + e.r, e.y + e.r);
     ctx.lineTo(e.x - e.r, e.y + e.r);
     ctx.closePath();
+  } else if (e.shape === 'pent') {
+    for (let i = 0; i < 5; i++) {
+      const angle = (i / 5) * Math.PI * 2 - Math.PI / 2;
+      const px = e.x + Math.cos(angle) * e.r;
+      const py = e.y + Math.sin(angle) * e.r;
+      if (i === 0) ctx.moveTo(px, py);
+      else ctx.lineTo(px, py);
+    }
+    ctx.closePath();
+  } else if (e.shape === 'diamond') {
+    ctx.moveTo(e.x, e.y - e.r);
+    ctx.lineTo(e.x + e.r, e.y);
+    ctx.lineTo(e.x, e.y + e.r);
+    ctx.lineTo(e.x - e.r, e.y);
+    ctx.closePath();
+  } else if (e.shape === 'hex') {
+    for (let i = 0; i < 6; i++) {
+      const angle = (i / 6) * Math.PI * 2 - Math.PI / 6;
+      const px = e.x + Math.cos(angle) * e.r;
+      const py = e.y + Math.sin(angle) * e.r;
+      if (i === 0) ctx.moveTo(px, py);
+      else ctx.lineTo(px, py);
+    }
+    ctx.closePath();
   } else {
     ctx.arc(e.x, e.y, e.r, 0, Math.PI * 2);
   }
@@ -62,6 +86,8 @@ export class Game {
     this.surgeActive = false;
     this.surgeTimer = 0;
     this.nextSurge = 40;
+    this.surgeCount = 0;
+    this._activeShields = [];
     this._st = 0;
     this._lastHitSound = 0;
     this._lastXpSound = 0;
@@ -71,6 +97,7 @@ export class Game {
     this.bossWarned = false;
     this.bossIntro = false;
     this.bossIntroT = 0;
+    this.bossActive = false;
     this.nextBossTime = BOSS_SPAWN_TIME;
     this.bossRespawnT = 0;
     this.cryoFields = [];
@@ -82,6 +109,7 @@ export class Game {
     this.shatterBursts = [];
     this.playtestMode = false;
     this.playtestBuild = null;
+    this.playtestLabState = createPlaytestLabState();
     this.camX = 0;
     this.camY = 0;
     this.bgNodes = [];
@@ -91,10 +119,13 @@ export class Game {
     this.pendingCascades = [];
     this.tripleWaves = [];
     this.slowFields = [];
+    this.currentUpgradePool = [];
     this.overloadFlash = 0;
     this.chainFlash = 0;
     this.novaFlashT = 0;
     this.novaImpactFlashes = [];
+    this._bossShockwave = null;
+    this._screenFlash = null;
   }
 
   start() {
@@ -156,6 +187,8 @@ export class Game {
     this.surgeActive = false;
     this.surgeTimer = 0;
     this.nextSurge = 40;
+    this.surgeCount = 0;
+    this._activeShields = [];
     this._st = 0;
     this._lastHitSound = 0;
     this._lastXpSound = 0;
@@ -165,6 +198,7 @@ export class Game {
     this.bossWarned = false;
     this.bossIntro = false;
     this.bossIntroT = 0;
+    this.bossActive = false;
     this.nextBossTime = BOSS_SPAWN_TIME;
     this.bossRespawnT = 0;
     this.cryoFields = [];
@@ -178,10 +212,13 @@ export class Game {
     this.pendingCascades = [];
     this.tripleWaves = [];
     this.slowFields = [];
+    this.currentUpgradePool = [];
     this.overloadFlash = 0;
     this.chainFlash = 0;
     this.novaFlashT = 0;
     this.novaImpactFlashes = [];
+    this._bossShockwave = null;
+    this._screenFlash = null;
     this.P = mkPlayer(this.W, this.H, char);
     this.P._pulseMines = [];
     this.P._pulseOverloadCounter = 0;
@@ -344,6 +381,10 @@ export class Game {
     if (this.overloadFlash > 0) this.overloadFlash = Math.max(0, this.overloadFlash - dt);
     if (this.chainFlash > 0) this.chainFlash = Math.max(0, this.chainFlash - dt);
     if (this.novaFlashT > 0) this.novaFlashT = Math.max(0, this.novaFlashT - dt);
+    if (this._screenFlash) {
+      this._screenFlash.life -= dt;
+      if (this._screenFlash.life <= 0) this._screenFlash = null;
+    }
     this.novaImpactFlashes = this.novaImpactFlashes.filter(flash => {
       flash.life -= dt;
       return flash.life > 0;
@@ -358,7 +399,9 @@ export class Game {
     this._updateSurge(dt);
     this.updateBackground(dt);
     this._spawnEnemies(dt);
+    this._updateActiveShields();
     this._updateBoss(dt);
+    this.updateBossShockwave(dt);
     this._fireWeapons(dt);
     if (getWeaponLevel(P, 'arcblade')) {
       this.updateArcBlade(dt);
@@ -398,7 +441,7 @@ export class Game {
     const remainingDamage = this.absorbWithShield(dmg);
     if (remainingDamage <= 0) return false;
     P.hp -= remainingDamage;
-    P.invT = 0.7;
+    P.invT = 0.6;
     P.hurtFlash = 1;
     P.hpLag = Math.max(P.hpLag, P.hp + remainingDamage);
     this.setShake(shakeDur, shakeMag);
@@ -432,17 +475,19 @@ export class Game {
     P._shieldRechargeT = tier.rechargeTime;
     P._shieldFlashT = 0.22;
     P._shieldHitT = 0;
-    const heal = Math.min(P.maxHp - P.hp, Math.round(P._shieldAbsorbedCycle || 0));
+    const missingHp = P.maxHp - P.hp;
+    const absorbed = P._shieldAbsorbedCycle || 0;
+    const heal = Math.min(absorbed, missingHp * 0.4);
     if (heal > 0) {
       const healFrom = P.hp;
-      P.hp += heal;
+      P.hp = Math.min(P.maxHp, P.hp + heal);
       P.hpLag = Math.max(P.hpLag, P.hp);
       P.barrierHealFrom = healFrom;
       P.barrierHealTo = P.hp;
       P.barrierHealT = 1;
       P.barrierHealImpactT = 1;
       this._spawnBarrierHealFx(P, healFrom, P.hp);
-      this.addDN(P.x, P.y - 26, `+${heal}`, '#C6FF00', 0.8, true);
+      this.addDN(P.x, P.y - 26, `+${Math.round(heal)}`, '#C6FF00', 0.8, true);
     }
     P._shieldAbsorbedCycle = 0;
     addBurst(P.x, P.y, '#C6FF00', 18, 150, 4.5, 0.36);
@@ -478,17 +523,6 @@ export class Game {
     addRing(P.x, P.y, P.r + 14, '#C6FF00', 3, 0.35);
     addRing(P.x, P.y, P.r + 22, '#FFFFFF', 1.6, 0.18);
     addBurst(P.x, P.y, '#C6FF00', 10, 90, 3.2, 0.24);
-  }
-
-  applyBossTransitionTax() {
-    const P = this.P;
-    if (!P || P.hp <= 0) return;
-    const tax = P.hp * 0.25;
-    P.hp = Math.max(1, P.hp - tax);
-    P.hurtFlash = 1;
-    P.hpLag = Math.max(P.hpLag, P.hp + tax);
-    this.setShake(0.48, 34);
-    playPlayerHit();
   }
 
   clearEnemyBullets() {
@@ -844,9 +878,7 @@ export class Game {
     const baseStrength = ring === 1 ? 80 : ring === 2 ? 140 : 200;
     const typeMult = e.type === 'brute' ? 0.4 : e.type === 'runner' ? 1.3 : 1;
     const strength = baseStrength * typeMult;
-    e._knockVx = Math.cos(knockAngle) * strength;
-    e._knockVy = Math.sin(knockAngle) * strength;
-    e._knockT = 0.35;
+    applyKnockback(e, Math.cos(knockAngle) * strength, Math.sin(knockAngle) * strength, 0.35);
   }
 
   applyCascadePulse(hitEnemies) {
@@ -906,8 +938,7 @@ export class Game {
       if (d >= cascadeR) return;
       this.hitEnemy(e, cascadeDmg, '#CC66FF');
       if (e.hp <= 0) return;
-      e.stunned = true;
-      e.stunT = 1.0;
+      applyStun(e, 1.0);
       e._cascaded = true;
     });
     pruneEnemies();
@@ -961,8 +992,7 @@ export class Game {
           });
           continue;
         }
-        target.stunT = Math.max(target.stunT || 0, 0.5);
-        target.stunned = true;
+        applyStun(target, 0.5);
         arcsDrawn.push({
           x1: stunned.x,
           y1: stunned.y,
@@ -1141,22 +1171,76 @@ export class Game {
     }
     if (this.surgeActive) {
       this.surgeTimer -= dt;
-      if (this.surgeTimer <= 0) { this.surgeActive = false; setSurge(false); }
+      if (this.surgeTimer <= 0) {
+        this.surgeActive = false;
+        this.surgeCount++;
+        setSurge(false);
+      }
     }
     if (this.surgeFlashT > 0) this.surgeFlashT -= dt;
+  }
+
+  _updateActiveShields() {
+    this._activeShields = enemies
+      .filter(e => e.type === 'leech' && e.shieldActive && e.hp > 0)
+      .map(leech => ({
+        x: leech.x,
+        y: leech.y,
+        r: leech.shieldR,
+        leech,
+      }));
   }
 
   _spawnEnemies(dt) {
     // no spawning during boss intro or while boss is alive
     if (this.bossIntro || (this.boss && this.boss.alive)) return;
     this._st += dt;
-    const wave = this.gt / 45;
+    const wave = this.gt < 120
+      ? Math.floor(this.gt / 45)
+      : Math.floor(3 + (this.gt - 120) / 40);
     const baseRate = Math.max(0.06, 0.9 - this.gt / 110);
     const rate = this.surgeActive ? baseRate * 0.3 : baseRate;
     if (this._st >= rate) {
       this._st = 0;
+      const beforeCount = enemies.length;
       const batch = this.surgeActive ? Math.ceil(1 + wave * 0.5) : 1;
-      for (let i = 0; i < batch; i++) spawnEnemy(this.gt, this.W, this.H, this.camX, this.camY);
+      for (let i = 0; i < batch; i++) spawnEnemy(this.gt, this.W, this.H, this.camX, this.camY, this.surgeCount);
+      for (let i = beforeCount; i < enemies.length; i++) {
+        enemies[i]._onImmuneBlocked = target => this.showJuggernautImmuneFx(target);
+      }
+    }
+  }
+
+  updateBossShockwave(dt) {
+    if (!this._bossShockwave) return;
+    const sw = this._bossShockwave;
+
+    if (sw.phase === 'telegraph') {
+      sw.timer -= dt;
+      sw.telegraphR = Math.max(0, (1 - sw.timer / 1.5) * sw.telegraphMaxR);
+      addRing(sw.x, sw.y, sw.telegraphR, '#FF4444', 2, 0.05);
+
+      if (sw.timer <= 0) {
+        sw.phase = 'fire';
+        sw.fireR = 0;
+        const dist = Math.hypot(this.P.x - sw.x, this.P.y - sw.y);
+        if (dist < 200) {
+          const dmg = this.P.maxHp * 0.20;
+          this.P.hp = Math.max(1, this.P.hp - dmg);
+          this.P.hurtFlash = 1;
+          this.P.hpLag = Math.max(this.P.hpLag, this.P.hp + dmg);
+          this.setShake(0.3, 26);
+          this._screenFlash = { col: '#FF4444', alpha: 0.4, life: 0.3 };
+          playPlayerHit();
+        }
+      }
+      return;
+    }
+
+    if (sw.phase === 'fire') {
+      sw.fireR += 600 * dt;
+      addRing(sw.x, sw.y, sw.fireR, '#FFFFFF', 3, 0.1);
+      if (sw.fireR > 800) this._bossShockwave = null;
     }
   }
 
@@ -1174,6 +1258,7 @@ export class Game {
     if (!this.boss && !this.bossIntro && this.gt >= this.nextBossTime) {
       this.bossIntro = true;
       this.bossIntroT = 3.5;
+      this.bossActive = false;
       this.bossWarned = false;
       resetEnemies();
       this.clearEnemyBullets();
@@ -1186,6 +1271,7 @@ export class Game {
       if (this.bossIntroT <= 0) {
         this.bossIntro = false;
         this.boss = mkBoss(this.gt, this.P, H, WORLD_W, WORLD_H);
+        this.bossActive = true;
         setExtraTarget(this.boss); // weapons now lock onto boss
       }
       return; // boss not active yet during intro
@@ -1193,6 +1279,7 @@ export class Game {
 
     // dead boss — show upgrade screen then schedule respawn
     if (this.boss && !this.boss.alive) {
+      this.bossActive = false;
       this.bossRespawnT -= dt;
       if (this.bossRespawnT <= 0) {
         this.boss = null;
@@ -1202,7 +1289,10 @@ export class Game {
       return;
     }
 
-    if (!this.boss) return;
+    if (!this.boss) {
+      this.bossActive = false;
+      return;
+    }
 
     updateBoss(this.boss, this.P, dt, {
       onHitPlayer: (dmg) => {
@@ -1213,13 +1303,19 @@ export class Game {
       },
       onPhaseChange: () => {
         this.setShake(0.72, 40);
+        this._bossShockwave = {
+          x: this.boss.x,
+          y: this.boss.y,
+          telegraphR: 0,
+          telegraphMaxR: 300,
+          phase: 'telegraph',
+          timer: 1.5,
+          fireR: 0,
+        };
         const text = this.boss?.phase === 3 ? '!!! SIGNAL OVERCLOCK !!!' : '!! SIGNAL ENRAGED !!';
         const col = this.boss?.phase === 3 ? '#8A2BE2' : '#D4537E';
         this.addDN(this.P.x, this.P.y - 60, text, col, 2.5, true);
         playBossPhaseTwo();
-      },
-      onTransitionTax: () => {
-        this.applyBossTransitionTax();
       },
       onClearEnemyBullets: () => {
         this.clearEnemyBullets();
@@ -1241,6 +1337,7 @@ export class Game {
       addRing(this.boss.x, this.boss.y, 120, '#fff', 3, 0.7);
       addRing(this.boss.x, this.boss.y, 180, this.boss.col, 2, 0.9);
       this.setShake(0.6, 36);
+      this._bossShockwave = null;
       clearExtraTarget(); // weapons stop targeting boss
       stopBossMusic();
       playBossDeath();
@@ -1250,14 +1347,8 @@ export class Game {
 
   _showBossUpgrade() {
     this.paused = true;
-    const ascensionDraft = buildAscensionPool(this.P);
-    if (ascensionDraft) {
-      showAscensionDraft(ascensionDraft.weaponId, ascensionDraft.options, ascensionId => {
-        this.pickAscension(ascensionDraft.weaponId, ascensionId);
-      });
-      return;
-    }
-    const pool = buildPool(this.P);
+    const pool = buildPool(this.P, { allowAscension: false });
+    this.currentUpgradePool = pool;
     const cards = pool.map(u => renderUpgradeCard(u, this.P, `window.__game.pickBossUpgrade('${u.id}')`)).join('');
     showOverlay(`
       <div style="color:#E24B4A;font-size:9px;letter-spacing:3px;margin-bottom:6px">// SIGNAL TERMINATED //</div>
@@ -1268,6 +1359,7 @@ export class Game {
 
   pickBossUpgrade(id) {
     applyUpgrade(id, this.P);
+    this.currentUpgradePool = [];
     hideOverlay();
     this.paused = false;
     if (this.P.xp >= this.P.xpNext) { const v = this.P.xp; this.P.xp = 0; this.addXp(v); }
@@ -1275,6 +1367,7 @@ export class Game {
 
   pickAscension(weaponId, ascensionId) {
     applyAscension(this.P, weaponId, ascensionId);
+    this.currentUpgradePool = [];
     hideOverlay();
     this.paused = false;
     if (this.P.xp >= this.P.xpNext) { const v = this.P.xp; this.P.xp = 0; this.addXp(v); }
@@ -1342,6 +1435,7 @@ export class Game {
         onShieldRestore: (player) => this._restoreShield(player),
       });
     });
+    this.bossActive = !!this.boss?.alive;
   }
 
   _tryCryoStormHit(bullet, enemy) {
@@ -1418,7 +1512,7 @@ export class Game {
       const dy = target.y - enemy.y;
       if (dx * dx + dy * dy > 120 * 120) return;
       target.freezeCooldown = 0;
-      target.freezeMeter = target.freezeThreshold;
+      target.freezeMeter = getEffectiveFreezeThreshold(target);
     });
   }
 
@@ -1530,8 +1624,7 @@ export class Game {
       }
       this.slowFields.forEach(field => {
         if (Math.hypot(e.x - field.x, e.y - field.y) < field.r) {
-          e.slowT = 0.3;
-          e.spdMult = 0.4;
+          applySlow(e, 0.3, 0.4);
         }
       });
       if (e._pullTimer > 0 && e._pullTarget) {
@@ -1552,6 +1645,34 @@ export class Game {
         }
       }
       if (e.stunned || e.frozen) return;
+
+      if (e.type === 'leech') {
+        let nearestEnemy = null;
+        let nearestDist = Infinity;
+        enemies.forEach(other => {
+          if (other === e || other.type === 'leech' || other.hp <= 0) return;
+          const d = Math.hypot(other.x - e.x, other.y - e.y);
+          if (d < nearestDist) {
+            nearestDist = d;
+            nearestEnemy = other;
+          }
+        });
+
+        const target = nearestEnemy || P;
+        const dx = target.x - e.x;
+        const dy = target.y - e.y;
+        const d = Math.sqrt(dx * dx + dy * dy) || 1;
+        const m = e.slowT > 0 ? (e.spdMult || 0.45) : 1;
+        e.x += dx / d * e.spd * m * dt;
+        e.y += dy / d * e.spd * m * dt;
+        e.x = cl(e.x, e.r, WORLD_W - e.r);
+        e.y = cl(e.y, e.r, WORLD_H - e.r);
+        if (Math.hypot(P.x - e.x, P.y - e.y) < e.r + P.r && P.invT <= 0) {
+          this.hitPlayer(e.dmg, 0.28, 26);
+        }
+        return;
+      }
+
       const m = e.slowT > 0 ? (e.spdMult || 0.45) : 1;
       const dx = P.x - e.x, dy = P.y - e.y, d = Math.sqrt(dx * dx + dy * dy) || 1;
       e.x += dx / d * e.spd * m * dt;
@@ -1614,9 +1735,55 @@ export class Game {
     return { killed: false, target: this.boss, damage: dmg };
   }
 
+  showJuggernautImmuneFx(target) {
+    if (!target || target.type !== 'juggernaut') return;
+    addRing(target.x, target.y, target.r + 15, '#FF6600', 3, 0.3);
+    addBurst(target.x, target.y, '#FF8800', 6, 60, 2, 0.3);
+    this.addDN(target.x, target.y - target.r - 10, 'IMMUNE', '#FF6600', 0.6, true);
+  }
+
+  getShieldFor(target) {
+    return this._activeShields?.find(shield =>
+      shield.leech?.shieldActive &&
+      shield.leech.hp > 0 &&
+      shield.leech !== target &&
+      Math.hypot(target.x - shield.x, target.y - shield.y) < shield.r
+    ) || null;
+  }
+
+  popLeechShield(leech) {
+    if (!leech?.shieldActive || leech._shieldPopped) return;
+    leech.shieldActive = false;
+    leech.shieldHp = 0;
+    leech._shieldPopped = true;
+    addBurst(leech.x, leech.y, '#44FF88', 16, 120, 4, 0.5);
+    addRing(leech.x, leech.y, 80, '#44FF88', 2.5, 0.4);
+    this.addXp(10);
+    this.addDN(leech.x, leech.y - leech.r - 10, 'SHIELD BROKEN', '#44FF88', 1.1, true);
+  }
+
   hitEnemy(e, dmg, col, isSynergy = false, minHpFloor = null) {
     if (this.P.char === 'bruiser' && this.P.hp < this.P.maxHp * 0.5) dmg *= 1.35;
     if (this._maybeApplyShatter(e)) dmg = 0;
+
+    if (e.type === 'leech' && e.shieldActive) {
+      e.shieldHp -= dmg;
+      e.hitFlash = 0.1;
+      addBurst(e.x, e.y, e.shieldCol || '#44FF88', isSynergy ? 6 : 3, isSynergy ? 90 : 60, 2.5, 0.32);
+      if (dmg > 0) this.addDN(e.x, e.y - e.r, Math.round(dmg), e.shieldCol || '#44FF88', 0.7, isSynergy);
+      const now = performance.now();
+      if (now - this._lastHitSound > 80) { playHit(isSynergy); this._lastHitSound = now; }
+      if (e.shieldHp <= 0) this.popLeechShield(e);
+      return { killed: false, target: e, damage: 0 };
+    }
+
+    const shield = this.getShieldFor(e);
+    if (shield) {
+      shield.leech.shieldHp -= dmg * 0.70;
+      if (shield.leech.shieldHp <= 0) this.popLeechShield(shield.leech);
+      dmg *= 0.30;
+    }
+
     if (minHpFloor != null) {
       const floor = Math.max(1, minHpFloor);
       if (e.hp - dmg < floor) dmg = Math.max(0, e.hp - floor);
@@ -1660,7 +1827,7 @@ export class Game {
 
   fireShot(e) {
     const a = Math.atan2(this.P.y - e.y, this.P.x - e.x);
-    bullets.push({ x: e.x, y: e.y, vx: Math.cos(a) * 170, vy: Math.sin(a) * 170, r: 5, dmg: 10, col: '#FFB627', life: 4, pl: 0, enemy: true, meta: {} });
+    bullets.push({ x: e.x, y: e.y, vx: Math.cos(a) * 170, vy: Math.sin(a) * 170, r: 5, dmg: e.projectileDmg || 12.5, col: '#FFB627', life: 4, pl: 0, enemy: true, meta: {} });
   }
 
   addXp(v) {
@@ -1757,6 +1924,7 @@ export class Game {
     this.paused = true;
     playLevelUp();
     const pool = buildPool(this.P);
+    this.currentUpgradePool = pool;
     const cards = pool.map(u => renderUpgradeCard(u, this.P, `window.__game.pickUpgrade('${u.id}')`)).join('');
     showOverlay(`
       <div style="color:#444;font-size:9px;letter-spacing:3px;margin-bottom:6px">// SYSTEM UPGRADE //</div>
@@ -1766,7 +1934,18 @@ export class Game {
   }
 
   pickUpgrade(id) {
+    if (id.startsWith('asc_')) {
+      const wid = id.slice(4);
+      const ascensionOptions = this.currentUpgradePool.find(option => option.id === id)?.options || [];
+      if (ascensionOptions.length) {
+        showAscensionDraft(wid, ascensionOptions, ascensionId => {
+          this.pickAscension(wid, ascensionId);
+        });
+        return;
+      }
+    }
     applyUpgrade(id, this.P);
+    this.currentUpgradePool = [];
     hideOverlay();
     this.paused = false;
     if (this.P.xp >= this.P.xpNext) { const v = this.P.xp; this.P.xp = 0; this.addXp(v); }
@@ -1939,8 +2118,10 @@ export class Game {
   openPlaytestLab() {
     const char = this.getSelectedCharacter();
     this.playtestBuild = sanitizePlaytestBuild(this.playtestBuild, char);
+    this.syncPlaytestLabState();
     if (this.running) this.paused = true;
-    showOverlay(renderPlaytestLab(this.playtestBuild, char, this.running, this.getPlaytestWorldDebug()), 'playtest-screen');
+    showOverlay(renderPlaytestLab(this.playtestBuild, char, this.running, this.getPlaytestWorldDebug(), this.playtestLabState), 'playtest-screen');
+    this.initPlaytestLabControls();
   }
 
   getPlaytestWorldDebug() {
@@ -1987,7 +2168,7 @@ export class Game {
   playtestAdjustWeapon(wid, delta) {
     const char = this.getSelectedCharacter();
     this.playtestBuild = sanitizePlaytestBuild(this.playtestBuild, char);
-    const min = wid === char.startWeapon ? 1 : 0;
+    const min = 0;
     const current = this.playtestBuild.weapons[wid] || 0;
     this.playtestBuild.weapons[wid] = cl(Math.round(current + delta), min, 5);
     if (this.playtestBuild.weapons[wid] < 5) this.playtestBuild.ascensions[wid] = null;
@@ -2022,6 +2203,9 @@ export class Game {
     next.y = prev.y;
     next.vx = 0;
     next.vy = 0;
+    Object.keys(next.ws).forEach(wid => {
+      next.ws[wid] = mkWeaponState();
+    });
 
     Object.entries(this.playtestBuild.weapons || {}).forEach(([wid, lvl]) => {
       if (lvl > 0) addWeapon(next, wid, lvl);
@@ -2050,6 +2234,165 @@ export class Game {
     clearExtraTarget();
     if (this.boss?.alive) setExtraTarget(this.boss);
     this.updateCamera();
+  }
+
+  syncPlaytestLabState() {
+    const char = this.getSelectedCharacter();
+    this.playtestBuild = sanitizePlaytestBuild(this.playtestBuild, char);
+    if (!this.playtestLabState) this.playtestLabState = createPlaytestLabState();
+
+    Object.keys(LAB_WEAPON_INPUTS).forEach(wid => {
+      this.playtestLabState.weapons[wid] = this.playtestBuild?.weapons?.[wid] || 0;
+    });
+    Object.keys(LAB_PASSIVE_INPUTS).forEach(pid => {
+      this.playtestLabState.passives[pid] = this.playtestBuild?.passives?.[pid] || 0;
+    });
+
+    if (this.running && this.P) {
+      this.playtestLabState.timeSkipSeconds = Math.max(0, Math.floor(this.gt));
+      this.playtestLabState.surgeCount = Math.max(0, this.surgeCount || 0);
+      Object.keys(LAB_WEAPON_INPUTS).forEach(wid => {
+        this.playtestLabState.weapons[wid] = getWeaponLevel(this.P, wid);
+      });
+      this.playtestLabState.stats.hp = Math.max(1, Math.round(this.P.maxHp || 100));
+      this.playtestLabState.stats.level = Math.max(1, Math.round(this.P.level || 1));
+      return;
+    }
+
+    const preview = previewPlaytestPlayer(char, this.playtestBuild);
+    this.playtestLabState.timeSkipSeconds = 0;
+    this.playtestLabState.surgeCount = 0;
+    this.playtestLabState.stats.hp = Math.max(1, Math.round(preview.maxHp || 100));
+    this.playtestLabState.stats.level = Math.max(1, Math.round(preview.level || 1));
+  }
+
+  initPlaytestLabControls() {
+    const bindClick = (id, handler) => {
+      const el = document.getElementById(id);
+      if (!el) return;
+      el.addEventListener('click', handler);
+    };
+
+    bindClick('lab-apply-time', () => this.applyPlaytestTimeSkip());
+    bindClick('lab-apply-loadout', () => this.applyPlaytestLoadout());
+    bindClick('lab-preset-lategame', () => this.applyPlaytestPreset('lategame'));
+    bindClick('lab-preset-bosstest', () => this.applyPlaytestPreset('bosstest'));
+    bindClick('lab-preset-maxweapon', () => this.applyPlaytestPreset('maxweapon'));
+  }
+
+  getLabNumberValue(id, fallback = 0) {
+    const el = document.getElementById(id);
+    if (!el) return fallback;
+    const value = parseInt(el.value, 10);
+    return Number.isFinite(value) ? value : fallback;
+  }
+
+  readPlaytestLabInputs() {
+    const state = createPlaytestLabState();
+    state.timeSkipSeconds = cl(this.getLabNumberValue('lab-timeskip', this.playtestLabState?.timeSkipSeconds || 0), 0, 600);
+    state.surgeCount = cl(this.getLabNumberValue('lab-surgecount', this.playtestLabState?.surgeCount || 0), 0, 10);
+
+    Object.entries(LAB_WEAPON_INPUTS).forEach(([wid, inputId]) => {
+      state.weapons[wid] = cl(this.getLabNumberValue(inputId, 0), 0, 5);
+    });
+    Object.entries(LAB_PASSIVE_INPUTS).forEach(([pid, inputId]) => {
+      state.passives[pid] = cl(this.getLabNumberValue(inputId, 0), 0, 5);
+    });
+
+    state.stats.hp = cl(this.getLabNumberValue('lab-stat-hp', this.playtestLabState?.stats?.hp || 100), 1, 999);
+    state.stats.level = cl(this.getLabNumberValue('lab-stat-level', this.playtestLabState?.stats?.level || 1), 1, 50);
+    this.playtestLabState = state;
+    return state;
+  }
+
+  ensurePlaytestRunActive() {
+    if (this.running) return true;
+    alert('Start a run first');
+    return false;
+  }
+
+  applyPlaytestTimeSkip() {
+    if (!this.ensurePlaytestRunActive()) return;
+    const state = this.readPlaytestLabInputs();
+    const targetTime = state.timeSkipSeconds;
+    const surgeOverride = state.surgeCount;
+
+    this.gt = targetTime;
+    this.surgeCount = surgeOverride;
+    this.surgeActive = false;
+    this.surgeTimer = 0;
+    this.surgeFlashT = 0;
+    setSurge(false);
+    this.nextSurge = getNextSurgeTime(targetTime);
+    resetEnemies();
+    this.clearEnemyBullets();
+    this._activeShields = [];
+    this._st = 999;
+
+    if (!this.bossIntro && !(this.boss && this.boss.alive)) {
+      this.boss = null;
+      this.bossActive = false;
+      this.bossRespawnT = 0;
+      this.bossWarned = false;
+      this.nextBossTime = getLabNextBossTime(targetTime);
+      clearExtraTarget();
+    }
+
+    console.log(`[LAB] Time skipped to ${targetTime}s, surge count ${surgeOverride}`);
+    updateHUD(this.P, this.gt, WDEFS);
+    this.openPlaytestLab();
+  }
+
+  applyPlaytestLoadout() {
+    if (!this.ensurePlaytestRunActive()) return;
+    const state = this.readPlaytestLabInputs();
+    const char = this.getSelectedCharacter();
+    const requestedWeapons = Object.entries(state.weapons)
+      .filter(([, lvl]) => lvl > 0)
+      .slice(0, 4);
+    const allowedWeaponIds = new Set(requestedWeapons.map(([wid]) => wid));
+
+    const nextBuild = {
+      ...this.playtestBuild,
+      weapons: {},
+      passives: { ...state.passives },
+      ascensions: { ...(this.playtestBuild?.ascensions || {}) },
+    };
+
+    Object.keys(LAB_WEAPON_INPUTS).forEach(wid => {
+      nextBuild.weapons[wid] = allowedWeaponIds.has(wid) ? state.weapons[wid] : 0;
+      if (nextBuild.weapons[wid] < 5) nextBuild.ascensions[wid] = null;
+    });
+
+    this.playtestBuild = sanitizePlaytestBuild(nextBuild, char);
+    this._applyPlaytestBuildToPlayer();
+
+    const hpOverride = cl(state.stats.hp, 1, 999);
+    const levelOverride = cl(state.stats.level, 1, 50);
+    this.P.maxHp = hpOverride;
+    this.P.hp = hpOverride;
+    this.P.hpLag = hpOverride;
+    this.P.level = levelOverride;
+    this.P.xp = 0;
+    this.P.xpNext = getXpTargetForLevel(levelOverride);
+
+    console.log('[LAB] Loadout applied:', this.playtestBuild.weapons, 'level:', this.P.level, 'hp:', this.P.hp);
+    updateHUD(this.P, this.gt, WDEFS);
+    this.openPlaytestLab();
+  }
+
+  applyPlaytestPreset(presetId) {
+    const preset = PLAYTEST_LAB_PRESETS[presetId];
+    if (!preset) return;
+
+    Object.entries(preset).forEach(([id, value]) => {
+      const el = document.getElementById(id);
+      if (el) el.value = value;
+    });
+
+    this.readPlaytestLabInputs();
+    document.getElementById('lab-apply-time')?.click();
+    document.getElementById('lab-apply-loadout')?.click();
   }
 
   drawBackground() {
@@ -2271,7 +2614,7 @@ export class Game {
   drawArcBlade() {
     const { ctx } = this;
     const P = this.P;
-    if (!P.w?.arcblade && !getWeaponLevel(P, 'arcblade')) return;
+    if (!getWeaponLevel(P, 'arcblade')) return;
     if (P.ascensions.arcblade === 'saw_blade') return;
 
     const drawBoomerang = (x, y, rotation, alpha = 1, scale = 1) => {
@@ -2378,7 +2721,41 @@ export class Game {
   drawEnemies(perfMode) {
     const { ctx } = this;
     enemies.forEach(e => {
-      const col = e.hitFlash > 0 ? '#fff' : e.frozen ? '#00CFFF' : e.stunned ? '#BF77FF' : e.slowT > 0 ? '#7ecfef' : e.col;
+      if (e.type === 'titan') {
+        const pulse = 0.15 + 0.08 * Math.sin(this.gt * 1.5 + e._pulseOffset);
+        ctx.save();
+        ctx.globalAlpha = pulse;
+        ctx.fillStyle = '#CC0000';
+        ctx.beginPath();
+        ctx.arc(e.x, e.y, e.r + 12, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.restore();
+      }
+      if (e.type === 'juggernaut') {
+        const crackle = 0.4 + 0.3 * Math.sin(this.gt * 8 + e.x);
+        ctx.save();
+        ctx.globalAlpha = crackle;
+        ctx.strokeStyle = '#FF6600';
+        ctx.lineWidth = 2;
+        ctx.shadowColor = '#FF8800';
+        ctx.shadowBlur = 12;
+        ctx.setLineDash([3, 4]);
+        ctx.beginPath();
+        ctx.arc(e.x, e.y, e.r + 7, 0, Math.PI * 2);
+        ctx.stroke();
+        ctx.setLineDash([]);
+        ctx.shadowBlur = 0;
+        ctx.globalAlpha = 0.15;
+        ctx.fillStyle = '#FF6600';
+        ctx.beginPath();
+        ctx.arc(e.x, e.y, e.r + 7, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.restore();
+      }
+      const baseCol = e.type === 'leech'
+        ? (e.shieldActive ? (e.protectedCol || '#2A9B5A') : e.col)
+        : e.col;
+      const col = e.hitFlash > 0 ? '#fff' : e.frozen ? '#00CFFF' : e.stunned ? '#BF77FF' : e.slowT > 0 ? '#7ecfef' : baseCol;
       ctx.fillStyle = col + 'bb';
       ctx.strokeStyle = col;
       ctx.lineWidth = 1.5;
@@ -2463,14 +2840,73 @@ export class Game {
         ctx.arc(e.x, e.y, e.r + 3, 0, Math.PI * 2);
         ctx.stroke();
       }
-      if (!perfMode || e.type === 'brute') {
-        const bw = e.r * 2 + 2;
+      if (!perfMode || e.type === 'brute' || e.type === 'titan') {
+        const isTitan = e.type === 'titan';
+        const bw = isTitan ? e.r * 2.5 : e.r * 2 + 2;
+        const bh = isTitan ? 5 : 3;
+        const barX = isTitan ? e.x - bw * 0.5 : e.x - e.r - 1;
+        const barY = e.y - e.r - (isTitan ? 12 : 9);
         ctx.fillStyle = '#111';
-        ctx.fillRect(e.x - e.r - 1, e.y - e.r - 9, bw, 3);
+        ctx.fillRect(barX, barY, bw, bh);
         ctx.fillStyle = col;
-        ctx.fillRect(e.x - e.r - 1, e.y - e.r - 9, bw * Math.max(0, e.hp / e.maxHp), 3);
+        ctx.fillRect(barX, barY, bw * Math.max(0, e.hp / e.maxHp), bh);
+      }
+
+      if (e.type === 'leech' && !e.shieldActive) {
+        ctx.save();
+        ctx.strokeStyle = '#44FF88';
+        ctx.lineWidth = 1.5;
+        ctx.beginPath();
+        ctx.arc(e.x, e.y - e.r - 8, 5, Math.PI * 0.15, Math.PI * 1.85);
+        ctx.stroke();
+        ctx.beginPath();
+        ctx.moveTo(e.x - 3, e.y - e.r - 4);
+        ctx.lineTo(e.x + 4, e.y - e.r - 11);
+        ctx.stroke();
+        ctx.restore();
       }
     });
+  }
+
+  drawLeechShields() {
+    const { ctx } = this;
+    enemies
+      .filter(e => e.type === 'leech' && e.shieldActive)
+      .forEach(leech => {
+        const shieldAlpha = 0.15 + 0.08 * Math.sin(this.gt * 2 + leech.x);
+        const shieldFraction = Math.max(0, leech.shieldHp / Math.max(1, leech.maxShieldHp));
+
+        ctx.globalAlpha = shieldAlpha;
+        ctx.fillStyle = '#44FF88';
+        ctx.beginPath();
+        ctx.arc(leech.x, leech.y, leech.shieldR, 0, Math.PI * 2);
+        ctx.fill();
+
+        ctx.globalAlpha = 0.5;
+        ctx.strokeStyle = '#44FF88';
+        ctx.lineWidth = 2;
+        ctx.shadowColor = '#44FF88';
+        ctx.shadowBlur = 8;
+        ctx.beginPath();
+        ctx.arc(leech.x, leech.y, leech.shieldR, 0, Math.PI * 2);
+        ctx.stroke();
+        ctx.shadowBlur = 0;
+
+        ctx.globalAlpha = 0.8;
+        ctx.strokeStyle = '#AAFFCC';
+        ctx.lineWidth = 3;
+        ctx.beginPath();
+        ctx.arc(
+          leech.x,
+          leech.y,
+          leech.shieldR + 4,
+          -Math.PI / 2,
+          -Math.PI / 2 + shieldFraction * Math.PI * 2
+        );
+        ctx.stroke();
+
+        ctx.globalAlpha = 1;
+      });
   }
 
   drawBullets(ultraMode) {
@@ -2833,6 +3269,12 @@ export class Game {
       ctx.fillRect(0, 0, W, H);
     }
 
+    if (this._screenFlash) {
+      const alpha = this._screenFlash.alpha * Math.max(0, this._screenFlash.life / 0.3);
+      ctx.fillStyle = `rgba(255,68,68,${alpha})`;
+      ctx.fillRect(0, 0, W, H);
+    }
+
     ctx.globalAlpha = 1;
   }
 
@@ -2898,6 +3340,7 @@ export class Game {
     this.drawArcBlade();
     this.drawSawBlade();
     drawBoss(ctx, this.boss);
+    this.drawLeechShields();
     this.drawEnemies(perfMode);
     this.drawBullets(ultraMode);
     this.drawPlayer();
@@ -3066,16 +3509,25 @@ function wDesc(wid, lvl) {
       5: 'Adds a sixth orbiting swarm drone.'
     },
     barrier: {
-      1: 'Absorbs 40 damage per cycle. Active 5s, recharge 8s.',
-      2: 'Absorbs 65 damage per cycle. Active 6s, recharge 7s.',
-      3: 'Absorbs 95 damage per cycle. Active 7s, recharge 6s.',
-      4: 'Absorbs 130 damage per cycle. Active 8s, recharge 5s.',
-      5: 'Absorbs 175 damage per cycle. Active 10s, recharge 4s.'
+      1: 'Absorbs 40 damage per cycle. Active 4.2s, recharge 8s.',
+      2: 'Absorbs 65 damage per cycle. Active 5.1s, recharge 7s.',
+      3: 'Absorbs 95 damage per cycle. Active 5.9s, recharge 6s.',
+      4: 'Absorbs 130 damage per cycle. Active 6.8s, recharge 5s.',
+      5: 'Absorbs 175 damage per cycle. Active 8.5s, recharge 4s.'
     }
   }[wid] || {})[lvl] || '';
 }
 
 function renderUpgradeCard(u, p, onClick) {
+  if (u.type === 'ascension') {
+    const w = WDEFS[u.wid];
+    const optionNames = (u.options || []).map(option => option.name).join(' · ');
+    return `<div class="uc wep" tabindex="0" onclick="${onClick}" style="border:1px solid rgba(0,207,255,0.85);box-shadow:0 0 0 2px rgba(0,207,255,0.18), inset 0 0 0 1px rgba(255,255,255,0.08);background:linear-gradient(180deg, rgba(5,14,20,0.98), rgba(11,19,28,0.98))">
+      <div class="ut" style="color:#00CFFF">ASCENSION</div>
+      <div class="un" style="color:${w.col}">${w.icon} ${w.name}</div>
+      <div class="ud">THIS L5 WEAPON CAN TRANSFORM</div>
+      <div class="us">${optionNames}</div></div>`;
+  }
   if (u.type === 'wep') {
     const w = WDEFS[u.wid];
     const stats = wStats(u.wid, u.lvl, p);
@@ -3100,7 +3552,8 @@ function weaponUnlockDesc(wid) {
     pulse: 'Launches a heavy explosive Pulse shell that upgrades into cluster-bomb bursts.',
     emp: 'Sends a radial EMP stun that upgrades mostly through larger and larger control radius.',
     swarm: 'Deploys orbiting drones that keep scaling by adding more swarm bodies.',
-    barrier: 'Wraps the player in a cycling shield that absorbs damage, then recharges after breaking.'
+    barrier: 'Wraps the player in a cycling shield that absorbs damage, then recharges after breaking.',
+    arcblade: 'Throws orbiting boomerang blades that loop out and back around the player.'
   }[wid] || 'Unlocks a new weapon.');
 }
 function passiveHeadline(id) {
@@ -3152,7 +3605,7 @@ function sanitizePlaytestBuild(build, char) {
   };
 
   Object.keys(next.weapons).forEach(wid => {
-    const min = wid === char.startWeapon ? 1 : 0;
+    const min = 0;
     next.weapons[wid] = cl(Math.round(next.weapons[wid] || 0), min, 5);
   });
 
@@ -3176,6 +3629,9 @@ function sanitizePlaytestBuild(build, char) {
 function previewPlaytestPlayer(char, build) {
   const p = mkPlayer(0, 0, char);
   const safeBuild = sanitizePlaytestBuild(build, char);
+  Object.keys(p.ws).forEach(wid => {
+    p.ws[wid] = mkWeaponState();
+  });
   Object.entries(safeBuild.weapons).forEach(([wid, lvl]) => {
     if (lvl > 0) addWeapon(p, wid, lvl);
   });
@@ -3193,8 +3649,9 @@ function previewPlaytestPlayer(char, build) {
   return p;
 }
 
-function renderPlaytestLab(build, char, isRunActive, worldDebug) {
+function renderPlaytestLab(build, char, isRunActive, worldDebug, labState) {
   const safeBuild = sanitizePlaytestBuild(build, char);
+  const safeState = labState || createPlaytestLabState();
   const summary = previewPlaytestPlayer(char, safeBuild);
   const ascensionCards = Object.entries(ASCENSIONS).map(([wid, options]) => {
     const weapon = WDEFS[wid];
@@ -3227,7 +3684,7 @@ function renderPlaytestLab(build, char, isRunActive, worldDebug) {
   const weaponCards = Object.keys(WDEFS).map(wid => {
     const weapon = WDEFS[wid];
     const lvl = safeBuild.weapons[wid] || 0;
-    const min = wid === char.startWeapon ? 1 : 0;
+    const min = 0;
     const canDown = lvl > min;
     const stats = lvl > 0 ? wStats(wid, lvl, summary) : [weaponUnlockDesc(wid)];
     return `
@@ -3243,7 +3700,7 @@ function renderPlaytestLab(build, char, isRunActive, worldDebug) {
             <button class="playtest-step" ${lvl < 5 ? '' : 'disabled'} onclick="window.__game.playtestAdjustWeapon('${wid}', 1)">+</button>
           </div>
         </div>
-        <div class="playtest-item-copy">${wid === char.startWeapon ? 'Starter weapon cannot go below Tier 1.' : 'Tap to slot in or remove this weapon instantly.'}</div>
+        <div class="playtest-item-copy">Tap to slot in or remove this weapon instantly.</div>
         <div class="playtest-stats">${stats.filter(Boolean).slice(0, 4).map(line => `<span>${line}</span>`).join('')}</div>
       </div>`;
   }).join('');
@@ -3318,12 +3775,159 @@ function renderPlaytestLab(build, char, isRunActive, worldDebug) {
         <div class="panel-label">ASCENSIONS</div>
         <div class="playtest-grid">${ascensionCards}</div>
       </section>
+      <section class="records-panel">
+        <div class="lab-section">
+          <div class="lab-label">// TIME SKIP //</div>
+          <div class="lab-row">
+            <label for="lab-timeskip">Jump to (seconds):</label>
+            <input type="number" id="lab-timeskip" value="${safeState.timeSkipSeconds}" min="0" max="600" step="30">
+          </div>
+          <div class="lab-row">
+            <label for="lab-surgecount">Surge count override:</label>
+            <input type="number" id="lab-surgecount" value="${safeState.surgeCount}" min="0" max="10" step="1">
+          </div>
+          <button type="button" id="lab-apply-time">APPLY TIME SKIP</button>
+          <div class="lab-hint">Sets game clock and surge count. Enemies scale to the new time immediately.</div>
+        </div>
+        <div class="lab-section">
+          <div class="lab-label">// INSTANT LOADOUT //</div>
+          <div class="lab-label-sub">Weapons (level 0 = not equipped)</div>
+          <div class="lab-row"><label for="lab-w-cryo">Cryo:</label><input type="number" id="lab-w-cryo" value="${safeState.weapons.cryo}" min="0" max="5" step="1"></div>
+          <div class="lab-row"><label for="lab-w-pulse">Pulse:</label><input type="number" id="lab-w-pulse" value="${safeState.weapons.pulse}" min="0" max="5" step="1"></div>
+          <div class="lab-row"><label for="lab-w-emp">EMP:</label><input type="number" id="lab-w-emp" value="${safeState.weapons.emp}" min="0" max="5" step="1"></div>
+          <div class="lab-row"><label for="lab-w-swarm">Swarm:</label><input type="number" id="lab-w-swarm" value="${safeState.weapons.swarm}" min="0" max="5" step="1"></div>
+          <div class="lab-row"><label for="lab-w-barrier">Barrier:</label><input type="number" id="lab-w-barrier" value="${safeState.weapons.barrier}" min="0" max="5" step="1"></div>
+          <div class="lab-row"><label for="lab-w-arcblade">Arc Blade:</label><input type="number" id="lab-w-arcblade" value="${safeState.weapons.arcblade}" min="0" max="5" step="1"></div>
+          <div class="lab-label-sub">Passives (number of times applied)</div>
+          <div class="lab-row"><label for="lab-p-spd">Sprint (speed):</label><input type="number" id="lab-p-spd" value="${safeState.passives.spd}" min="0" max="5" step="1"></div>
+          <div class="lab-row"><label for="lab-p-dmg">Overclock (damage):</label><input type="number" id="lab-p-dmg" value="${safeState.passives.dmg}" min="0" max="5" step="1"></div>
+          <div class="lab-row"><label for="lab-p-mag">Magnet:</label><input type="number" id="lab-p-mag" value="${safeState.passives.mag}" min="0" max="5" step="1"></div>
+          <div class="lab-row"><label for="lab-p-hp">Nano-Repair (HP):</label><input type="number" id="lab-p-hp" value="${safeState.passives.hp}" min="0" max="5" step="1"></div>
+          <div class="lab-row"><label for="lab-p-dg">Ghost Step (dodge):</label><input type="number" id="lab-p-dg" value="${safeState.passives.dg}" min="0" max="5" step="1"></div>
+          <div class="lab-row"><label for="lab-p-rt">Overclock Fire:</label><input type="number" id="lab-p-rt" value="${safeState.passives.rt}" min="0" max="5" step="1"></div>
+          <div class="lab-label-sub">Player stats</div>
+          <div class="lab-row"><label for="lab-stat-hp">HP:</label><input type="number" id="lab-stat-hp" value="${safeState.stats.hp}" min="1" max="999" step="10"></div>
+          <div class="lab-row"><label for="lab-stat-level">Player level:</label><input type="number" id="lab-stat-level" value="${safeState.stats.level}" min="1" max="50" step="1"></div>
+          <button type="button" id="lab-apply-loadout">APPLY LOADOUT</button>
+          <div class="lab-hint">Applies instantly to current run. Start a run first.</div>
+        </div>
+        <div class="lab-section">
+          <div class="lab-label">// PRESETS //</div>
+          <button type="button" id="lab-preset-lategame">LATE GAME (5 min)</button>
+          <button type="button" id="lab-preset-bosstest">BOSS TEST</button>
+          <button type="button" id="lab-preset-maxweapon">MAX SINGLE WEAPON</button>
+        </div>
+      </section>
       <div class="menu-actions">${actions}</div>
       ${isRunActive ? '<div class="playtest-hint">Tap LAB or press L during a test run to reopen this panel.</div>' : ''}
     </div>`;
 }
 
 function cl(v, a, b) { return Math.max(a, Math.min(b, v)); }
+function getXpTargetForLevel(level) {
+  let xpNext = 14;
+  for (let current = 1; current < Math.max(1, level); current++) {
+    xpNext = Math.floor(xpNext * 1.22);
+  }
+  return xpNext;
+}
+
+function getNextSurgeTime(time) {
+  return (Math.floor(Math.max(0, time) / 40) + 1) * 40;
+}
+
+function getLabNextBossTime(time) {
+  if (time < BOSS_SPAWN_TIME) return BOSS_SPAWN_TIME;
+  return time + 10;
+}
+
+function createPlaytestLabState() {
+  return {
+    timeSkipSeconds: 0,
+    surgeCount: 0,
+    weapons: Object.fromEntries(Object.keys(LAB_WEAPON_INPUTS).map(wid => [wid, 0])),
+    passives: Object.fromEntries(Object.keys(LAB_PASSIVE_INPUTS).map(pid => [pid, 0])),
+    stats: {
+      hp: 100,
+      level: 1,
+    },
+  };
+}
+
+const LAB_WEAPON_INPUTS = {
+  cryo: 'lab-w-cryo',
+  pulse: 'lab-w-pulse',
+  emp: 'lab-w-emp',
+  swarm: 'lab-w-swarm',
+  barrier: 'lab-w-barrier',
+  arcblade: 'lab-w-arcblade',
+};
+
+const LAB_PASSIVE_INPUTS = {
+  spd: 'lab-p-spd',
+  dmg: 'lab-p-dmg',
+  mag: 'lab-p-mag',
+  hp: 'lab-p-hp',
+  dg: 'lab-p-dg',
+  rt: 'lab-p-rt',
+};
+
+const PLAYTEST_LAB_PRESETS = {
+  lategame: {
+    'lab-timeskip': 300,
+    'lab-surgecount': 7,
+    'lab-w-cryo': 3,
+    'lab-w-pulse': 3,
+    'lab-w-emp': 2,
+    'lab-w-swarm': 0,
+    'lab-w-barrier': 0,
+    'lab-w-arcblade': 0,
+    'lab-p-dmg': 2,
+    'lab-p-spd': 1,
+    'lab-p-mag': 0,
+    'lab-p-hp': 0,
+    'lab-p-dg': 0,
+    'lab-p-rt': 1,
+    'lab-stat-hp': 160,
+    'lab-stat-level': 15,
+  },
+  bosstest: {
+    'lab-timeskip': 110,
+    'lab-surgecount': 2,
+    'lab-w-cryo': 3,
+    'lab-w-pulse': 2,
+    'lab-w-emp': 0,
+    'lab-w-swarm': 0,
+    'lab-w-barrier': 0,
+    'lab-w-arcblade': 0,
+    'lab-p-dmg': 1,
+    'lab-p-spd': 1,
+    'lab-p-mag': 0,
+    'lab-p-hp': 0,
+    'lab-p-dg': 0,
+    'lab-p-rt': 0,
+    'lab-stat-hp': 130,
+    'lab-stat-level': 8,
+  },
+  maxweapon: {
+    'lab-timeskip': 180,
+    'lab-surgecount': 4,
+    'lab-w-cryo': 5,
+    'lab-w-pulse': 0,
+    'lab-w-emp': 0,
+    'lab-w-swarm': 0,
+    'lab-w-barrier': 0,
+    'lab-w-arcblade': 0,
+    'lab-p-dmg': 3,
+    'lab-p-spd': 2,
+    'lab-p-mag': 0,
+    'lab-p-hp': 0,
+    'lab-p-dg': 0,
+    'lab-p-rt': 2,
+    'lab-stat-hp': 190,
+    'lab-stat-level': 12,
+  },
+};
 function getDiscAngle(discIndex, discCount, baseAngle) {
   if (discCount === 1) return baseAngle;
   if (discCount === 2) return discIndex === 0 ? baseAngle : baseAngle + Math.PI;

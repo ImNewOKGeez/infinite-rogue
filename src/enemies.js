@@ -6,6 +6,54 @@ import { WORLD_H, WORLD_W } from './constants.js';
 export const enemies = [];
 let enemyIdCounter = 1;
 
+const ENEMY_DEFS = {
+  runner: { r: 10, baseHp: 16, hpWaveScale: 10 / 16, spd: 115, spdWaveScale: 8, dmg: 8.05, xp: 3, col: '#E24B4A', shape: 'tri' },
+  shooter: { r: 12, baseHp: 28, hpWaveScale: 13 / 28, spd: 58, spdWaveScale: 4, dmg: 0, xp: 5, col: '#FFB627', shape: 'circ', shootT: 1, projectileDmg: 11.5 },
+  brute: { r: 21, baseHp: 120, hpWaveScale: 40 / 120, spd: 40, spdWaveScale: 3, dmg: 27.6, xp: 12, col: '#D4537E', shape: 'sq' },
+  titan: {
+    r: 32,
+    baseHp: 800,
+    hpWaveScale: 0.4,
+    spd: 25,
+    dmg: 35,
+    xp: 40,
+    col: '#8B0000',
+    glowCol: '#CC0000',
+    shape: 'hex',
+    stunResist: 0.2,
+    freezeThreshMult: 3,
+  },
+  juggernaut: {
+    r: 22,
+    baseHp: 180,
+    hpWaveScale: 0.4,
+    spd: 72,
+    dmg: 20,
+    xp: 8,
+    col: '#FF6600',
+    shape: 'pent',
+    stunImmune: true,
+    slowImmune: true,
+    knockImmune: true,
+    freezeThreshMult: 2,
+  },
+  leech: {
+    r: 14,
+    baseHp: 80,
+    hpWaveScale: 0.35,
+    spd: 38,
+    dmg: 5,
+    xp: 15,
+    col: '#1A6B3A',
+    shieldCol: '#44FF88',
+    protectedCol: '#2A9B5A',
+    shape: 'diamond',
+    shieldR: 80,
+    baseShieldHp: 300,
+    shieldWaveScale: 50,
+  },
+};
+
 export function resetEnemies() {
   enemies.length = 0;
   enemyIdCounter = 1;
@@ -30,7 +78,118 @@ function mkStatusState() {
   };
 }
 
-export function spawnEnemy(gt, W, H, camX, camY) {
+export function getEffectiveFreezeThreshold(target) {
+  return Math.max(1, (target.freezeThreshold || 1) * (target.freezeThreshMult || 1));
+}
+
+function emitImmuneBurst(target) {
+  target._onImmuneBlocked?.(target);
+}
+
+export function applyStun(target, duration) {
+  if (target.stunImmune) {
+    emitImmuneBurst(target);
+    return false;
+  }
+  const stunDuration = duration * (target.stunResist || 1);
+  target.stunT = Math.max(target.stunT || 0, stunDuration);
+  target.stunned = true;
+  return true;
+}
+
+export function applySlow(target, duration, spdMult = 0.45) {
+  if (target.slowImmune) {
+    target.slowT = 0;
+    target.spdMult = 1;
+    emitImmuneBurst(target);
+    return false;
+  }
+  target.slowT = Math.max(target.slowT || 0, duration);
+  target.spdMult = Math.min(target.spdMult || 1, spdMult);
+  return true;
+}
+
+export function applyKnockback(target, vx, vy, duration = 0.35) {
+  if (target.knockImmune) {
+    emitImmuneBurst(target);
+    return false;
+  }
+  target._knockVx = vx;
+  target._knockVy = vy;
+  target._knockT = duration;
+  return true;
+}
+
+export function getEnemyType(surgeCount, roll) {
+  if (surgeCount === 0) return 'runner';
+
+  if (surgeCount === 1) {
+    if (roll < 0.70) return 'runner';
+    return 'shooter';
+  }
+
+  if (surgeCount === 2) {
+    if (roll < 0.55) return 'runner';
+    if (roll < 0.80) return 'shooter';
+    return 'brute';
+  }
+
+  if (surgeCount === 3) {
+    if (roll < 0.45) return 'runner';
+    if (roll < 0.70) return 'shooter';
+    if (roll < 0.88) return 'brute';
+    return 'titan';
+  }
+
+  if (surgeCount === 4) {
+    if (roll < 0.35) return 'runner';
+    if (roll < 0.58) return 'shooter';
+    if (roll < 0.75) return 'brute';
+    if (roll < 0.88) return 'titan';
+    return 'juggernaut';
+  }
+
+  if (roll < 0.28) return 'runner';
+  if (roll < 0.46) return 'shooter';
+  if (roll < 0.60) return 'brute';
+  if (roll < 0.72) return 'titan';
+  if (roll < 0.84) return 'juggernaut';
+  return 'leech';
+}
+
+function buildEnemy(type, x, y, wave, lateGameMult) {
+  const base = ENEMY_DEFS[type];
+  const maxHp = base.baseHp * (1 + wave * base.hpWaveScale) * lateGameMult;
+  const enemy = {
+    id: enemyIdCounter++,
+    ...base,
+    type,
+    x: clamp(x, 0, WORLD_W),
+    y: clamp(y, 0, WORLD_H),
+    maxHp,
+    hp: maxHp,
+    spd: base.spd + (base.spdWaveScale || 0) * wave,
+    dmg: base.dmg * lateGameMult,
+    ...mkStatusState(),
+    freezeThreshold: Math.ceil(maxHp / 40),
+  };
+
+  if (type === 'titan') {
+    enemy._pulseOffset = Math.random() * Math.PI * 2;
+  }
+
+  if (type === 'leech') {
+    const shieldHp = base.baseShieldHp + wave * base.shieldWaveScale;
+    enemy.shieldHp = shieldHp;
+    enemy.maxShieldHp = shieldHp;
+    enemy.shieldActive = true;
+    enemy._shieldPopped = false;
+  }
+
+  return enemy;
+}
+
+export function spawnEnemy(gt, W, H, camX, camY, surgeCount = 0) {
   const side = Math.floor(Math.random() * 4);
   let x, y;
   const pad = 50;
@@ -41,33 +200,22 @@ export function spawnEnemy(gt, W, H, camX, camY) {
   x = clamp(x, 0, WORLD_W);
   y = clamp(y, 0, WORLD_H);
 
-  const wave = Math.floor(gt / 45);
-  const roll = Math.random();
-  let type = 'runner';
-  if (gt > 80 && roll < 0.22) type = 'brute';
-  else if (gt > 40 && roll < 0.42) type = 'shooter';
+  const wave = gt < 120
+    ? Math.floor(gt / 45)
+    : Math.floor(3 + (gt - 120) / 40);
+  const lateGameMult = gt > 150 ? 1 + (gt - 150) / 120 : 1;
+  const type = getEnemyType(surgeCount, Math.random());
+  if (type === 'leech') {
+    const activeLeeches = enemies.filter(e => e.type === 'leech' && e.hp > 0).length;
+    if (activeLeeches >= 2) return;
+  }
 
   const cnt = (type === 'runner' && Math.random() < 0.55)
-    ? Math.min(4, 2 + Math.floor(gt / 50)) : 1;
+    ? (2 + Math.floor(Math.random() * 3)) : 1;
 
   for (let k = 0; k < cnt; k++) {
     const ox = (k - (cnt - 1) / 2) * 20;
-    const base = {
-      runner: { r: 10, hp: 16 + wave * 10, spd: 115 + wave * 8, dmg: 7, xp: 3, col: '#E24B4A', shape: 'tri' },
-      shooter: { r: 12, hp: 28 + wave * 13, spd: 58 + wave * 4, dmg: 0, xp: 5, col: '#FFB627', shape: 'circ', shootT: 1 },
-      brute: { r: 21, hp: 120 + wave * 40, spd: 40 + wave * 3, dmg: 24, xp: 12, col: '#D4537E', shape: 'sq' },
-    }[type];
-    const maxHp = base.hp;
-    enemies.push({
-      id: enemyIdCounter++,
-      ...base,
-      type,
-      x: clamp(x + ox, 0, WORLD_W),
-      y: clamp(y, 0, WORLD_H),
-      maxHp,
-      ...mkStatusState(),
-      freezeThreshold: Math.ceil(maxHp / 40),
-    });
+    enemies.push(buildEnemy(type, x + ox, y, wave, lateGameMult));
   }
 }
 
@@ -88,20 +236,16 @@ export function ensureFreezeState(target) {
   return target;
 }
 
-export function applySlow(target, duration, spdMult = 0.45) {
-  target.slowT = Math.max(target.slowT || 0, duration);
-  target.spdMult = Math.min(target.spdMult || 1, spdMult);
-}
-
 export function applyFreezeBuildup(target, buildup, freezeDuration) {
   ensureFreezeState(target);
+  const effectiveThreshold = getEffectiveFreezeThreshold(target);
   if (target.frozen) {
     target.frozenTimer = Math.max(target.frozenTimer || 0, freezeDuration * 0.25);
     return { froze: false, meter: target.freezeMeter };
   }
   if (target.freezeCooldown > 0 || target.freezeImmune) return { froze: false, meter: target.freezeMeter };
-  target.freezeMeter = Math.min(target.freezeThreshold, target.freezeMeter + buildup);
-  if (target.freezeMeter >= target.freezeThreshold) {
+  target.freezeMeter = Math.min(effectiveThreshold, target.freezeMeter + buildup);
+  if (target.freezeMeter >= effectiveThreshold) {
     target.frozen = true;
     target.frozenTimer = Math.max(target.frozenTimer || 0, freezeDuration);
     target.slowT = 0;
@@ -112,7 +256,7 @@ export function applyFreezeBuildup(target, buildup, freezeDuration) {
 }
 
 function getFrostLevel(e) {
-  const threshold = Math.max(1, e.freezeThreshold || 1);
+  const threshold = getEffectiveFreezeThreshold(e);
   const fillPct = (e.freezeMeter / threshold) * 100;
   if (fillPct >= 75) return 3;
   if (fillPct >= 50) return 2;
@@ -135,13 +279,14 @@ function maybeSpreadFreeze(frozenEnemy) {
   });
 
   if (!targetEnemy) return;
-  const spreadAmount = (frozenEnemy.maxHp / targetEnemy.maxHp) * (targetEnemy.freezeThreshold * 0.75);
+  const spreadAmount = (frozenEnemy.maxHp / targetEnemy.maxHp) * (getEffectiveFreezeThreshold(targetEnemy) * 0.75);
   targetEnemy._freezeSourceLevel = frozenEnemy._freezeSourceLevel || 0;
   applyFreezeMeter(targetEnemy, spreadAmount);
 }
 
 export function updateEnemyFreezeState(e, dt, P = null) {
   ensureFreezeState(e);
+  const effectiveThreshold = getEffectiveFreezeThreshold(e);
 
   if (e.freezeCooldown > 0) e.freezeCooldown = Math.max(0, e.freezeCooldown - dt);
   if (e.isBoss && e.bossFreezeCooldown > 0) e.bossFreezeCooldown = Math.max(0, e.bossFreezeCooldown - dt);
@@ -162,7 +307,7 @@ export function updateEnemyFreezeState(e, dt, P = null) {
     return;
   }
 
-  if (e.freezeMeter >= e.freezeThreshold && e.freezeCooldown <= 0) {
+  if (e.freezeMeter >= effectiveThreshold && e.freezeCooldown <= 0) {
     e.frozen = true;
     e.permafrost = hasAscension(P, 'cryo', 'permafrost');
     e.frozenTimer = e.permafrost ? 99999 : 1.5;

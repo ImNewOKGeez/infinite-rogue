@@ -1,4 +1,4 @@
-import { enemies, nearest, dist2, pruneEnemies, getExtraTarget, applySlow, ensureFreezeState } from './enemies.js';
+import { enemies, nearest, dist2, pruneEnemies, getExtraTarget, applySlow, ensureFreezeState, applyStun, getEffectiveFreezeThreshold } from './enemies.js';
 import { addRing, addBurst, addDot } from './particles.js';
 import { getAscension, getWeaponLevel } from './player.js';
 
@@ -91,7 +91,7 @@ export const ASCENSIONS = {
     {
       id: 'frenzy',
       name: 'FRENZY',
-      description: 'A drone kill triggers a 4-second frenzy on that drone - 3x speed, 2x damage, continuous target seeking with no orbit return between hits. Multiple drones can frenzy simultaneously.',
+      description: 'A drone kill triggers a 3-second frenzy on that drone - 2x speed, 2x damage, continuous target seeking with no orbit return between hits. Each drone has a 3-second cooldown before it can frenzy again.',
     },
     {
       id: 'split_swarm',
@@ -155,6 +155,7 @@ function mkSwarmDrone(angle) {
     ht: 0,
     frenzy: false,
     frenzyT: 0,
+    frenzyCD: 0,
     pulseOffset: 0,
     hasSplitThisContact: false,
   };
@@ -193,11 +194,11 @@ function acquireSwarmTarget(allTargets, x, y, seekR, excludedTarget = null) {
 function getBarrierTier(lvl) {
   const tier = Math.min(Math.max(lvl, 1), 5);
   return {
-    1: { maxCap: 40, activeDuration: 5, rechargeTime: 8 },
-    2: { maxCap: 65, activeDuration: 6, rechargeTime: 7 },
-    3: { maxCap: 95, activeDuration: 7, rechargeTime: 6 },
-    4: { maxCap: 130, activeDuration: 8, rechargeTime: 5 },
-    5: { maxCap: 175, activeDuration: 10, rechargeTime: 4 },
+    1: { maxCap: 40, activeDuration: 4.2, rechargeTime: 8 },
+    2: { maxCap: 65, activeDuration: 5.1, rechargeTime: 7 },
+    3: { maxCap: 95, activeDuration: 5.9, rechargeTime: 6 },
+    4: { maxCap: 130, activeDuration: 6.8, rechargeTime: 5 },
+    5: { maxCap: 175, activeDuration: 8.5, rechargeTime: 4 },
   }[tier];
 }
 
@@ -436,8 +437,7 @@ export const WDEFS = {
         if (dist2(p, e) < r * r) {
           if (ascension) this.hitEnemy(e, dmg, '#BF77FF');
           else onHitEnemy(e, dmg, '#BF77FF');
-          e.stunT = stunDur;
-          e.stunned = true;
+          applyStun(e, stunDur);
         }
       });
 
@@ -480,7 +480,7 @@ export const WDEFS = {
         const isNova = !!options.isNova;
         const canFrenzy = !isNova && ascension === 'frenzy';
         const canSplit = !isNova && ascension === 'split_swarm';
-        const speedMult = isNova ? 2 : (canFrenzy && d.frenzy ? 3 : 1);
+        const speedMult = isNova ? 2 : (canFrenzy && d.frenzy ? 2 : 1);
         const damageMult = canFrenzy && d.frenzy ? 2 : 1;
         const hitCooldown = d.frenzy ? 0.08 : 0.55;
         const droneOrbitR = isNova ? orR * 1.3 : orR;
@@ -489,9 +489,14 @@ export const WDEFS = {
         d.pulseOffset = 0;
         if (d.cooldown > 0) d.cooldown -= dt;
         if (typeof d.ht === 'number' && d.ht > 0) d.ht -= dt;
+        if (typeof d.frenzyCD !== 'number') d.frenzyCD = 0;
         if (canFrenzy) {
+          if (d.frenzyCD > 0) d.frenzyCD = Math.max(0, d.frenzyCD - dt);
           d.frenzyT = Math.max(0, (d.frenzyT || 0) - dt);
-          if (d.frenzy && d.frenzyT <= 0) d.frenzy = false;
+          if (d.frenzy && d.frenzyT <= 0) {
+            d.frenzy = false;
+            d.frenzyCD = 3.0;
+          }
         }
 
         if (d.state === 'orbit') {
@@ -543,9 +548,9 @@ export const WDEFS = {
               });
             }
 
-            if (canFrenzy && hit?.killed && prevTarget !== boss) {
+            if (canFrenzy && hit?.killed && prevTarget !== boss && !d.frenzy && d.frenzyCD <= 0) {
               d.frenzy = true;
-              d.frenzyT = 4.0;
+              d.frenzyT = 3.0;
               helpers.onFrenzyStart?.(d);
             }
 
@@ -695,8 +700,7 @@ export function tickCryoAscension(P, enemyList, dt, addParticle, applyFreezeMete
     const dy = e.y - P.y;
     if (dx * dx + dy * dy > 150 * 150) return;
     applyFreezeMeterFn(e, 1.5);
-    e.slowT = 0.6;
-    e.spdMult = 0.4;
+    applySlow(e, 0.6, 0.4);
   });
   addParticle?.(P.x, P.y, 150, 'rgba(0, 207, 255, 0.22)', 1.5, 0.18);
 }
@@ -708,9 +712,10 @@ export function applyFreezeMeter(e, amount) {
   if (e.freezeImmune) return;
   if (e.isBoss && e.bossFreezeCooldown > 0) return;
 
-  e.freezeMeter = Math.min(e.freezeThreshold, e.freezeMeter + amount);
+  const effectiveThreshold = getEffectiveFreezeThreshold(e);
+  e.freezeMeter = Math.min(effectiveThreshold, e.freezeMeter + amount);
 
-  if (e.isBoss && e.freezeMeter > e.freezeThreshold * 0.3) {
+  if (e.isBoss && e.freezeMeter > effectiveThreshold * 0.3) {
     e.freezeMeter = 0;
     e.bossFreezeCooldown = 8;
   }

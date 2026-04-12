@@ -10,7 +10,8 @@ export const PASSIVES = [
   { id: 'rt', label: 'OVERCLOCK FIRE', apply: p => { const w = (p.rateBonus || 1).toFixed(1); p.rateBonus = (p.rateBonus || 1) * 1.25; return [`Fire rate: x${w} -> x${p.rateBonus.toFixed(1)}`]; } },
 ];
 
-export function buildPool(p) {
+export function buildPool(p, options = {}) {
+  const { allowAscension = true } = options;
   const weps = [];
   const slots = getOwnedWeaponIds(p).length;
   Object.keys(WDEFS).forEach(wid => {
@@ -37,6 +38,27 @@ export function buildPool(p) {
     const item = pas.shift();
     if (!pool.find(x => x.id === 'p_' + item.id)) pool.push({ ...item, id: 'p_' + item.id, type: 'pas' });
   }
+
+  if (allowAscension) {
+    const ascEligible = getOwnedWeaponIds(p).filter(wid =>
+      getWeaponLevel(p, wid) >= 5 &&
+      !p.ascensions?.[wid] &&
+      ASCENSIONS[wid]?.length > 0
+    );
+
+    if (ascEligible.length > 0 && Math.random() < 0.40 && pool.length) {
+      const wid = ascEligible[Math.floor(Math.random() * ascEligible.length)];
+      const ascPool = [...ASCENSIONS[wid]].sort(() => Math.random() - 0.5);
+      const ascCard = {
+        id: 'asc_' + wid,
+        type: 'ascension',
+        wid,
+        options: ascPool.slice(0, Math.min(3, ascPool.length)),
+      };
+      pool[pool.length - 1] = ascCard;
+    }
+  }
+
   return pool.slice(0, 3);
 }
 

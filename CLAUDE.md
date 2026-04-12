@@ -147,16 +147,17 @@ Broad by intent. The game should be readable for casual players and strategicall
 - Six run-wide passive upgrades.
 - XP gems with magnet pickup behavior and merge logic.
 - Heal orbs that restore 5% max HP and are globally throttled.
-- Surge events every 40 seconds outside boss flow.
+- Surge events every 40 seconds outside boss flow, with `Game.surgeCount` expanding the enemy roster after each surge completes.
+- Six live enemy types in the normal pool: Runner, Shooter, Brute, Titan, Juggernaut, and Shield Leech.
 - Recurring three-phase boss with warning, intro, boss bar, phase announcements, and post-kill reward draft.
-- Boss-gated weapon Ascension draft for level-5 weapons, with live pools for Cryo, Pulse, EMP, Swarm, and Arc Blade.
+- Level-up-pool weapon Ascension draft injection for eligible level-5 weapons, with live pools for Cryo, Pulse, EMP, Swarm, and Arc Blade.
 - Death screen with run stats, equipped weapons, and run synergies.
 - Save-backed records screen with global and per-character bests.
 - Persistent synergy discovery tracking with first-discovery pause overlay.
 - Procedural audio for weapons, hits, XP, surges, boss warning/phases/death, and boss music.
 - Stronger damage feedback including screen flash, low-health vignette, HP lag bar, and barrier-heal HP bar segment.
 - Cryo freeze buildup is live with per-enemy freeze meters, thaw cooldowns, frost visuals, and thaw burst feedback.
-- Playtest lab overlay with instant weapon/passive tier editing, ascension selection, and world/camera debug readouts.
+- Playtest lab overlay with instant weapon/passive tier editing, ascension selection, world/camera debug readouts, time skip controls, instant loadout injection, and one-click late-game/boss/max-weapon presets.
 - Capacitor configuration plus committed Android project are live in-repo.
 
 ### Built but still likely to change
@@ -250,6 +251,7 @@ The live weapon system is simple and numeric right now:
 - Level 4: 5 drones.
 - Level 5: 6 drones.
 - Drones orbit, acquire nearby targets, seek, hit, and return.
+- `FRENZY` now grants 3s of 2x speed and 2x damage, then applies a 3s per-drone cooldown before that drone can frenzy again.
 - `ASCENSIONS.swarm` currently defines `nova_swarm`, `frenzy`, and `split_swarm`.
 
 #### Arc Blade
@@ -259,12 +261,12 @@ The live weapon system is simple and numeric right now:
 - `ASCENSIONS.arcblade` currently defines `saw_blade`.
 
 #### Barrier
-- Level 1: absorb 40, active 5s, recharge 8s.
-- Level 2: absorb 65, active 6s, recharge 7s.
-- Level 3: absorb 95, active 7s, recharge 6s.
-- Level 4: absorb 130, active 8s, recharge 5s.
-- Level 5: absorb 175, active 10s, recharge 4s.
-- When the shield cycle ends or breaks, the player heals for absorbed damage up to missing HP.
+- Level 1: absorb 40, active 4.2s, recharge 8s.
+- Level 2: absorb 65, active 5.1s, recharge 7s.
+- Level 3: absorb 95, active 5.9s, recharge 6s.
+- Level 4: absorb 130, active 6.8s, recharge 5s.
+- Level 5: absorb 175, active 8.5s, recharge 4s.
+- When the shield cycle ends or breaks, the player heals for absorbed damage, capped at 40% of missing HP for that cycle.
 
 ## Current passive upgrades
 | ID | Label | Live effect |
@@ -284,6 +286,7 @@ The live weapon system is simple and numeric right now:
 - Upgrade pool logic lives in `src/upgrades.js`.
 - New weapons are only offered while the player owns fewer than 4 weapons.
 - Owned weapons can level up to 5.
+- Eligible level-5 weapons can inject an Ascension card into normal level-up drafts at a 40% chance; the Ascension card replaces one of the three normal cards and then opens the existing three-option Ascension draft.
 - Boss kills currently reuse the same pool structure in a dedicated reward draft.
 - Upgrade text should stay explicit and numeric wherever practical.
 
@@ -325,13 +328,22 @@ The live weapon system is simple and numeric right now:
 | Runner | Triangle | `#E24B4A` | Fast, low HP, often clustered |
 | Shooter | Circle | `#FFB627` | Holds range and fires slow projectiles |
 | Brute | Square | `#D4537E` | Slow, tanky, punishing contact damage |
+| Titan | Hexagon | `#8B0000` | Very slow elite with huge HP, heavy contact damage, a pulsing aura, strong stun resistance, and a much higher freeze threshold |
+| Juggernaut | Pentagon | `#FF6600` | Large control-breaker with high contact damage, full stun/slow/knock immunity, a permanent orange crackle aura, and a doubled freeze threshold |
+| Shield Leech | Diamond | `#1A6B3A` body / `#44FF88` shield | Slow support enemy that moves toward the nearest non-Leech enemy, redirects allied damage into a large shared shield bubble, and is capped at 2 active copies |
 
 ### Pressure rules
 - Runners start immediately.
-- Shooters begin after 40 seconds.
-- Brutes begin after 80 seconds.
-- Enemy stats scale by wave, where wave is roughly `floor(gt / 45)`.
-- Surges increase spawn density by batching multiple spawns.
+- After surge 1 completes, Shooters join the spawn pool.
+- After surge 2 completes, Brutes join.
+- After surge 3 completes, Titans join the normal pool with no warning banner or separate timer.
+- After surge 4 completes, Juggernauts join.
+- After surge 5 completes, Shield Leeches join.
+- Enemy stats now accelerate after 120 seconds through a steeper wave curve and a harder late-game damage multiplier.
+- Enemy scaling now ramps more gently after 120 seconds, with the damage multiplier delayed until 150 seconds and growing more slowly.
+- Base enemy damage is currently 15% higher than the earlier baseline across runner contact, shooter projectiles, and brute contact.
+- Surges increase spawn density by batching more enemies, but use the lighter `wave * 0.5` batch ramp again.
+- Active Shield Leeches are capped at 2 simultaneously.
 - No normal enemies spawn during boss intro or while the boss is alive.
 
 ## Current pickups
@@ -354,6 +366,7 @@ The live weapon system is simple and numeric right now:
 - First boss spawns at 120 seconds.
 - After a boss dies, the next boss is scheduled 90 seconds later.
 - Surges are cancelled or suppressed during boss intro and boss combat.
+- `Game` now also tracks `bossActive`, `surgeCount`, `_activeShields`, and `_bossShockwave` for surge-based roster progression, cached Leech shield lookups, and boss transition danger.
 
 ### Live behavior
 - Boss is a large signal construct with aimed volleys, radial rings, contact damage, and escalating movement pressure.
@@ -363,9 +376,9 @@ The live weapon system is simple and numeric right now:
 - clear enemy bullets
 - teleport the boss opposite the player
 - trigger a screen-space transition effect
-- apply a 25% current-HP tax to the player, leaving at least 1 HP
-- Phase 2 adds faster movement, charge attacks, denser pressure, and spiral patterns.
-- Phase 3 adds mines, barrages, faster charges, and stronger bullet density.
+- telegraph a 1.5-second avoidable shockwave from the boss position instead of applying an unavoidable HP tax
+- Phase 2 adds faster movement, faster charges, denser pressure, and spiral patterns.
+- Phase 3 adds denser barrages, faster and more numerous mine volleys, faster charges, and stronger bullet density.
 - Boss can be slowed or status-affected, but later phases gain stronger immunity behavior.
 - Boss death:
 - grants large XP payout
@@ -414,11 +427,11 @@ src/
   game.js        - core loop, world camera, menus, overlays, playtest lab, run flow, combat orchestration
   player.js      - character roster, player factory, weapon-state helpers
   weapons.js     - weapon defs, bullets, ascension defs, cryo ascension hooks, pulse clusters, and shield logic hooks
-  enemies.js     - enemy roster, spawn logic, targeting and status helpers, freeze-state updates, and freeze spread
-  upgrades.js    - passive defs, upgrade pool generation, `buildAscensionPool`, `applyUpgrade`, and `applyAscension`
+  enemies.js     - enemy roster, surge-based spawn logic, targeting/status helpers, freeze-state updates, and freeze spread
+  upgrades.js    - passive defs, upgrade pool generation, Ascension card injection, `applyUpgrade`, and `applyAscension`
   boss.js        - boss creation, update logic, rendering, phase behavior
   particles.js   - particles and combat feedback primitives
-  hud.js         - HUD DOM creation and overlay helpers
+  hud.js         - HUD DOM creation, overlay helpers, and temporary warning banners
   input.js       - keyboard and virtual joystick
   audio.js       - procedural SFX and boss music helpers
   style.css      - all HUD/menu/overlay styling
@@ -479,6 +492,12 @@ src/
 5. Keep moving gameplay systems toward easier future content addition.
 
 ## Changelog
+- 2026-04-12: Expanded the playtest lab with dev-only Time Skip and Instant Loadout panels, added late-game/boss/max-weapon presets, and documented the new lab controls here.
+- 2026-04-12: Softened the latest difficulty spike by restoring player damage i-frames to 0.6s, delaying and flattening the late-game damage multiplier, slowing post-2-minute wave growth, reducing the shared enemy damage bump from 25% to 15%, and restoring the lighter surge density floor and batch ramp.
+- 2026-04-12: Moved surge-count progression to the end of each surge so new enemy types first appear in the calm window after their introduction surge, upgraded Juggernaut readability with a larger frame plus permanent orange crackle aura and louder IMMUNE feedback, and simplified Shield Leech performance with nearest-enemy movement, a cap of 2 active Leeches, and a precomputed `_activeShields` cache.
+- 2026-04-12: Replaced time-threshold enemy introductions with surge-count gating, removed the separate Titan spawn timer and warning flow, added Juggernaut as a control-immune pentagon elite, and added Shield Leech as a cluster-seeking support enemy with a shared shield bubble and shield-break bonus XP.
+- 2026-04-12: Reworked Titan cadence into an escalating spawn interval with a 4-second warning window, pushed overall enemy threat harder after 2 minutes with faster wave growth and denser surges, removed the boss transition HP tax in favor of a telegraphed avoidable shockwave, and increased boss damage, charge pressure, mine pressure, barrage density, and time-based HP scaling.
+- 2026-04-12: Reduced shared player damage i-frames to 0.4s, rebalanced Barrier around shorter uptime and heal capped at 40% of missing HP, nerfed Swarm Frenzy to 2x speed with 3s duration plus per-drone cooldown, increased late-game enemy scaling and base damage, added the Titan elite with warning/aura/control resistance, and moved Ascensions from boss-kill gating into 40%-chance level-up card injection.
 - 2026-04-12: Reconciled this document against the live codebase: documented Arc Blade (`JAC'S BOOMERANG`), the current Pulse/EMP/Swarm/Cryo/Arc Blade Ascension pools, EMP's pure scaling table, the scrolling world camera, the playtest lab, and the Capacitor-plus-Android setup; removed stale "Cryo-only Ascensions live" and five-weapon wording.
 - 2026-04-09: Added the Ascension system, including boss-gated level-5 weapon transformations, a dedicated Ascension draft overlay, HUD `ASC` indicators, and the first full Cryo Ascension pool with Storm, Permafrost, Nova, Glacial Lance, Frost Field, and Shatter behaviors.
 - 2026-04-09: Tightened the boss again by reducing downtime, increasing bullet density, improving intercept/lane-cut pressure, adding marked charge impact bursts, and making phase escalations more demanding while keeping damage tied to visible telegraphs and avoidable positioning mistakes.

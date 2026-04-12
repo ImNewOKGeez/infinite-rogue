@@ -73,6 +73,7 @@ export function mkPlayer(W, H, char = CHARACTERS.ghost) {
     emp: mkWeaponState(),
     swarm: mkWeaponState(),
     barrier: mkWeaponState(),
+    arcblade: mkWeaponState(),
   };
   ws[char.startWeapon] = mkWeaponState(1);
   return {

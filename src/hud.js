@@ -18,6 +18,7 @@ export function initHUD() {
     <div id="hpbar-wrap"><div id="hpbar-damage" style="width:100%"></div><div id="hpbar-heal"></div><div id="hpbar" style="width:100%"></div></div>
     <div id="xpbar-wrap"><div id="xpbar"></div></div>
     <div id="surge">!! SURGE !!</div>
+    <div id="temp-banner" style="position:fixed;top:72px;left:50%;transform:translateX(-50%);z-index:25;opacity:0;pointer-events:none;font:700 12px Courier New, monospace;letter-spacing:3px;transition:opacity .2s ease;text-transform:uppercase"></div>
     <div id="bossbar-wrap">
       <div id="bossbar-label">◆ SIGNAL</div>
       <div id="bossbar-track"><div id="bossbar"></div></div>
@@ -35,6 +36,21 @@ export function initHUD() {
     </div>
     <button id="playtest-toggle" onclick="window.__game?.openPlaytestLab()" style="display:none">LAB</button>
     <div id="overlay"></div>`;
+}
+
+let tempMessageTimer = null;
+
+export function showTempMessage(text, colour = '#E24B4A', duration = 2.5) {
+  const banner = document.getElementById('temp-banner');
+  if (!banner) return;
+  banner.textContent = text;
+  banner.style.color = colour;
+  banner.style.opacity = '1';
+  banner.style.textShadow = `0 0 12px ${colour}`;
+  if (tempMessageTimer) clearTimeout(tempMessageTimer);
+  tempMessageTimer = setTimeout(() => {
+    banner.style.opacity = '0';
+  }, Math.max(0, duration) * 1000);
 }
 
 export function updateHUD(P, gt, WDEFS) {
