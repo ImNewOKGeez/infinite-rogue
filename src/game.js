@@ -2425,17 +2425,64 @@ export class Game {
       kills: this.killCount,
       level: this.P.level,
     });
-    const bestFields = new Set([
-      ...recordSummary.newGlobalBests,
-      ...recordSummary.newCharBests,
-    ]);
     const char = CHARACTERS[this.P.char] || this.getSelectedCharacter();
     const save = getSave();
     const charBest = save?.personalBests?.perCharacter?.[this.P.char];
-    const isNewTimeBest = bestFields.has('bestTime');
-    const isNewKillBest = bestFields.has('mostKills');
+    const isNewTimeBest = recordSummary.newGlobalBests.includes('bestTime') || recordSummary.newCharBests.includes('bestTime');
+    const isNewKillBest = recordSummary.newGlobalBests.includes('mostKills') || recordSummary.newCharBests.includes('mostKills');
     const timeStr = formatRunTimeView(this.gt);
     const surgeCount = this.surgeCount;
+    const runRatingTier = getRatingTier(this.gt);
+    const runRatingColor = RATING_COLORS[runRatingTier];
+
+    // Store death info for later display
+    this._lastDeathInfo = {
+      char, isNewTimeBest, isNewKillBest, timeStr, surgeCount,
+      runRatingTier, runRatingColor,
+      charBest
+    };
+
+    setTimeout(() => {
+      document.getElementById('death-vignette')?.classList.add('active');
+    }, 150);
+    setTimeout(() => {
+      this.showYouDiedScreen();
+    }, 600);
+  }
+
+  showYouDiedScreen() {
+    const info = this._lastDeathInfo;
+    window.__game_showDeathStats = () => {
+      playUIClick();
+      this.showFullDeathStats();
+    };
+    window.__game_returnToMenu = () => {
+      playUIClick();
+      this.returnToMenu();
+    };
+
+    const youDiedHTML = `
+      <div class="death-shell" style="display:flex;flex-direction:column;align-items:center;justify-content:center;gap:40px;padding:60px 40px">
+        <div style="text-align:center">
+          <div class="death-title glitch-text" style="font-size:64px;margin-bottom:24px">YOU DIED</div>
+          <div class="death-char-name" style="color:${info.char.col};font-size:28px;margin-bottom:32px">${info.char.name}</div>
+          <div style="font-size:48px;letter-spacing:4px;margin-bottom:16px;color:${info.runRatingColor};font-weight:bold">${info.runRatingTier}</div>
+          <div style="font-size:14px;color:#888;letter-spacing:2px;margin-bottom:32px">SURVIVAL TIME: ${info.timeStr}</div>
+        </div>
+
+        <div class="menu-actions" style="display:flex;flex-direction:column;gap:12px;width:100%;max-width:300px">
+          <button class="btn ui-btn-press" onclick="window.__game_showDeathStats()">VIEW STATS</button>
+          <button class="btn btn-secondary ui-btn-press" onclick="window.__game_returnToMenu()">MAIN MENU</button>
+        </div>
+      </div>
+    `;
+    showOverlay(youDiedHTML, 'death-screen you-died-screen');
+  }
+
+  showFullDeathStats() {
+    const info = this._lastDeathInfo;
+    const { char, isNewTimeBest, isNewKillBest, timeStr, surgeCount, runRatingTier, runRatingColor, charBest } = info;
+
     const allWeaponSlots = [];
     for (let i = 0; i < 4; i++) {
       const wid = this.P.ws[i];
@@ -2476,8 +2523,16 @@ export class Game {
         <div><span style="color:#888">SHIELD LEECHES</span><br><strong style="color:#1A6B3A">${this.killsByType.leech}</strong></div>
       </div>
     `;
-    const runRatingTier = getRatingTier(this.gt);
-    const runRatingColor = RATING_COLORS[runRatingTier];
+
+    window.__game_restartAfterStats = () => {
+      playUIClick();
+      this.restartAfterDeath();
+    };
+    window.__game_returnToMenuFromStats = () => {
+      playUIClick();
+      this.returnToMenu();
+    };
+
     const deathHTML = `
       <div class="death-shell">
         <div class="death-title glitch-text">FLATLINED</div>
@@ -2511,17 +2566,12 @@ export class Game {
         <div class="death-synergies">${synergiesHtml}</div>
 
         <div class="death-buttons menu-actions">
-          <button class="btn ui-btn-press" onclick="window.__game.restartAfterDeath()">${this.playtestMode ? 'RESTART TEST' : 'RUN AGAIN'}</button>
-          <button class="btn btn-secondary ui-btn-press" onclick="window.__game.returnToMenu()">MENU</button>
+          <button class="btn ui-btn-press" onclick="window.__game_restartAfterStats()">${this.playtestMode ? 'RESTART TEST' : 'RUN AGAIN'}</button>
+          <button class="btn btn-secondary ui-btn-press" onclick="window.__game_returnToMenuFromStats()">MENU</button>
         </div>
       </div>
-      `;
-    setTimeout(() => {
-      document.getElementById('death-vignette')?.classList.add('active');
-    }, 150);
-    setTimeout(() => {
-      showOverlay(deathHTML, 'death-screen');
-    }, 600);
+    `;
+    showOverlay(deathHTML, 'death-screen');
   }
 
   showMainMenu() {
