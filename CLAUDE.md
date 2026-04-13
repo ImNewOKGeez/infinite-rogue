@@ -138,7 +138,7 @@ Broad by intent. The game should be readable for casual players and strategicall
 ## Current implementation snapshot
 
 ### Built now
-- Main menu overlay with character selection, records access, and active-loadout presentation.
+- Main menu overlay with character selection, records access, active-loadout presentation, and staged entrance/selection polish.
 - Canvas-based core gameplay loop with keyboard plus virtual joystick support.
 - Scrolling `3000 x 3000` world with player-follow camera, world-edge clamping, and boundary-pressure feedback.
 - Three playable characters: Ghost, Bruiser, Hacker.
@@ -154,7 +154,8 @@ Broad by intent. The game should be readable for casual players and strategicall
 - Death screen with run stats, equipped weapons, and run synergies.
 - Save-backed records screen with global and per-character bests.
 - Persistent synergy discovery tracking with first-discovery pause overlay.
-- Procedural audio for weapons, hits, XP, surges, boss warning/phases/death, and boss music.
+- Procedural audio for weapons, hits, XP, surges, boss warning/phases/death, boss music, plus dedicated UI open/close/click/select/ascension/death stingers.
+- Shared UI polish system for main menu, level-up, death, records, discovery, and Ascension overlays using CSS transitions/keyframes, staggered card entrances, button press feedback, red death vignette lead-in, and Ascension screen flash/shimmer beats.
 - Stronger damage feedback including screen flash, low-health vignette, HP lag bar, and barrier-heal HP bar segment.
 - Cryo freeze buildup is live with per-enemy freeze meters, thaw cooldowns, frost visuals, thaw burst feedback, upgraded Cryo Storm/Nova/Permafrost readability, Glacial Lance charge-and-release behavior, and Frost Field's slow-first aura with minimal chip damage.
 - Playtest lab overlay with instant weapon/passive tier editing, ascension selection, world/camera debug readouts, time skip controls, instant loadout injection, and one-click late-game/boss/max-weapon presets.
@@ -475,10 +476,10 @@ src/
   upgrades.js    - passive defs, upgrade pool generation, Ascension card injection, `applyUpgrade`, and `applyAscension`
   boss.js        - boss creation, update logic, rendering, phase behavior
   particles.js   - particles and combat feedback primitives, including run-start resets
-  hud.js         - HUD DOM creation, overlay helpers, and temporary warning banners
+  hud.js         - HUD DOM creation, overlay helpers, temporary warning banners, and Ascension/records/discovery overlay markup
   input.js       - keyboard and virtual joystick
-  audio.js       - procedural SFX and boss music helpers
-  style.css      - all HUD/menu/overlay styling
+  audio.js       - procedural gameplay/UI SFX and boss music helpers
+  style.css      - all HUD/menu/overlay styling plus shared UI animation classes/keyframes
 ```
 
 ## Technical conventions
@@ -536,6 +537,7 @@ src/
 5. Keep moving gameplay systems toward easier future content addition.
 
 ## Changelog
+- 2026-04-13: Added a shared UI polish layer across the main menu, level-up draft, death screen, records/discovery overlays, and Ascension draft: dedicated UI sound exports (`playUIClick`, `playUIOpen`, `playUIClose`, `playUISelect`, `playDeathSound`, `playAscensionOpen`), reusable fade/slide/glitch/shimmer/pulse CSS animation classes, main-menu character selection transitions with staged JACK IN reveal, level-up pick exit choreography, death vignette plus staggered FLATLINED presentation, Ascension flash/shimmer/fade-to-black sequencing, and global overlay button press feedback.
 - 2026-04-13: Fixed Molotov's same-frame processing bug by marking newly created main, bounce, cluster, and Inferno bottles as `justCreated` and skipping their first update pass, preventing frame-spike drops while keeping T3/T5 multi-bottle throws and follow-up bottles stable.
 - 2026-04-12: Tuned Molotov follow-up spacing so Bouncing Cocktail now creates three uniform 85px pools across wider 140/120/100px hops, widened Cluster Molotov sub-bottle landing spread to 150-210px, and tightened the sector-throw fallback so multi-bottle tiers always launch their full bottle count even into empty sectors.
 - 2026-04-12: Refined Molotov follow-up behavior by confirming bounce/cluster positions in world space, increasing cluster sub-bottle readability (`0.5s` flight, `60px` arc, `0.8x` radius), and retuning `INFERNO` to `tier.radius * 1.8`, 8-second duration, half-rate throws, and a more distinct render treatment.

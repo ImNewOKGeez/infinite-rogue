@@ -1,11 +1,13 @@
 import { CHARACTERS, getOwnedWeaponIds, getWeaponLevel } from './player.js';
 import { getSave, SYNERGIES, isDiscovered } from './progression.js';
 import { WDEFS } from './weapons.js';
+import { playUIClick } from './audio.js';
 
 export function initHUD() {
   const app = document.getElementById('app');
   app.innerHTML = `
     <div id="danger-vignette"></div>
+    <div id="death-vignette"></div>
     <div id="damage-flash"></div>
     <div id="topbar">
       <span class="stat" id="stat-hp">■ 100/100</span>
@@ -161,6 +163,7 @@ export function setBossBar(boss) {
 export function showDiscoveryOverlay(synergy, onContinue) {
   if (!synergy) return;
   window.__hudDiscoveryContinue = () => {
+    playUIClick();
     if (typeof onContinue === 'function') onContinue();
   };
   const splitIndex = Math.ceil(synergy.label.length / 2);
@@ -177,7 +180,7 @@ export function showDiscoveryOverlay(synergy, onContinue) {
           <div class="discovery-detail-text">${synergy.description}</div>
         </div>
         <div class="menu-actions">
-          <button class="btn" onclick="window.__hudDiscoveryContinue()">CONTINUE</button>
+          <button class="btn ui-btn-press" onclick="window.__hudDiscoveryContinue()">CONTINUE</button>
         </div>
       </div>
     </div>`, 'discovery-screen');
@@ -185,15 +188,15 @@ export function showDiscoveryOverlay(synergy, onContinue) {
 
 export function showAscensionDraft(weaponId, options, onPick) {
   const weapon = WDEFS[weaponId];
-  window.__hudAscensionPick = ascensionId => {
-    if (typeof onPick === 'function') onPick(ascensionId);
+  window.__hudAscensionPick = (ascensionId, el) => {
+    if (typeof onPick === 'function') onPick(ascensionId, el);
   };
 
   const cards = options.map(option => `
     <button
-      class="uc wep"
+      class="uc wep asc-card ui-btn-press"
       style="border:1px solid rgba(0,207,255,0.85);box-shadow:0 0 0 2px rgba(0,207,255,0.18), inset 0 0 0 1px rgba(255,255,255,0.08);background:linear-gradient(180deg, rgba(5,14,20,0.98), rgba(11,19,28,0.98));text-align:left"
-      onclick="window.__hudAscensionPick('${option.id}')">
+      onclick="window.__hudAscensionPick('${option.id}', this)">
       <div class="ut" style="color:#00CFFF">ASCENSION</div>
       <div class="un" style="color:${weapon.col};font-size:18px">${option.name}</div>
       <div class="us" style="color:#9aa8b5;line-height:1.5">${option.description}</div>
@@ -202,12 +205,16 @@ export function showAscensionDraft(weaponId, options, onPick) {
 
   showOverlay(`
     <div style="width:min(1100px,92vw);text-align:center">
-      <div style="color:#00CFFF;font-size:10px;letter-spacing:4px;margin-bottom:8px">// ASCENSION UNLOCKED //</div>
-      <div style="font-size:18px;letter-spacing:2px;color:${weapon.col};margin-bottom:6px">${weapon.icon} ${weapon.name}</div>
-      <div style="font-size:10px;letter-spacing:2px;color:#5f6d7a;margin-bottom:20px">// THIS WEAPON HAS REACHED ITS LIMIT. CHOOSE ITS TRANSFORMATION. //</div>
+      <div class="asc-title" style="color:#00CFFF;font-size:10px;letter-spacing:4px;margin-bottom:8px">// ASCENSION UNLOCKED //</div>
+      <div class="asc-weapon-name" style="font-size:18px;letter-spacing:2px;color:${weapon.col};margin-bottom:6px">${weapon.icon} ${weapon.name}</div>
+      <div class="asc-subtitle" style="font-size:10px;letter-spacing:2px;color:#5f6d7a;margin-bottom:20px">// THIS WEAPON HAS REACHED ITS LIMIT. CHOOSE ITS TRANSFORMATION. //</div>
       <div class="upg-grid">${cards}</div>
     </div>
-  `, 'ascension-screen');
+  `, 'ascension-screen ascension-overlay');
+
+  setTimeout(() => {
+    document.querySelectorAll('.asc-card').forEach(card => card.classList.add('shimmer'));
+  }, 800);
 }
 
 export function showRecordsScreen(onBack) {
@@ -216,6 +223,7 @@ export function showRecordsScreen(onBack) {
   const perCharacter = save.personalBests.perCharacter;
   const discoveredCount = SYNERGIES.filter(s => isDiscovered(s.id)).length;
   window.__hudRecordsBack = () => {
+    playUIClick();
     if (typeof onBack === 'function') onBack();
   };
 
@@ -283,7 +291,7 @@ export function showRecordsScreen(onBack) {
         <div class="records-char-grid">${charBlocks}</div>
       </section>
       <div class="menu-actions">
-        <button class="btn btn-secondary" onclick="window.__hudRecordsBack()">BACK</button>
+        <button class="btn btn-secondary ui-btn-press" onclick="window.__hudRecordsBack()">BACK</button>
       </div>
     </div>`, 'records-screen');
 }

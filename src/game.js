@@ -17,7 +17,7 @@ import {
   playNovaDetonationSound,
   playFrenzySound,
   playHit, playEnemyDeath, playPlayerHit, playDodge,
-  playLevelUp, playXp, playSurge, playDeath, playDiscoverySound,
+  playLevelUp, playXp, playSurge, playDeath, playDeathSound, playDiscoverySound, playAscensionOpen, playUIClick, playUIClose, playUIOpen, playUISelect,
   playShatter,
   playBossWarning, playBossPhaseTwo, playBossDeath,
   startBossMusic, stopBossMusic,
@@ -84,6 +84,7 @@ export class Game {
   constructor() {
     this.P = null;
     this.selectedCharId = 'ghost';
+    this.menuSelectedCharId = null;
     this.gt = 0;
     this.lt = 0;
     this.dt = 0;
@@ -259,6 +260,7 @@ export class Game {
     this.shake.mag = 22;
     this.running = true;
     this.paused = false;
+    document.getElementById('death-vignette')?.classList.remove('active');
     this.setPlaytestToggleVisible(this.playtestMode);
     clearExtraTarget();
     setBossBar(null);
@@ -1642,7 +1644,7 @@ export class Game {
       <div style="color:#E24B4A;font-size:9px;letter-spacing:3px;margin-bottom:6px">// SIGNAL TERMINATED //</div>
       <div style="font-size:15px;color:#E24B4A;letter-spacing:2px;margin-bottom:4px">BOSS DEFEATED</div>
       <div style="font-size:9px;color:#444;letter-spacing:2px;margin-bottom:18px">choose your reward</div>
-      <div class="upg-grid">${cards}</div>`);
+      <div class="upg-grid">${cards}</div>`, 'levelup-screen');
   }
 
   pickBossUpgrade(id) {
@@ -1653,12 +1655,25 @@ export class Game {
     if (this.P.xp >= this.P.xpNext) { const v = this.P.xp; this.P.xp = 0; this.addXp(v); }
   }
 
-  pickAscension(weaponId, ascensionId) {
-    applyAscension(this.P, weaponId, ascensionId);
-    this.currentUpgradePool = [];
-    hideOverlay();
-    this.paused = false;
-    if (this.P.xp >= this.P.xpNext) { const v = this.P.xp; this.P.xp = 0; this.addXp(v); }
+  pickAscension(weaponId, ascensionId, pickedCard = null) {
+    playUISelect();
+    const overlay = document.getElementById('overlay');
+    const allCards = [...document.querySelectorAll('.asc-card')];
+    const otherCards = allCards.filter(card => card !== pickedCard);
+    if (pickedCard) pickedCard.style.transform = 'scale(1.05)';
+    otherCards.forEach(card => { card.style.opacity = '0'; });
+    setTimeout(() => {
+      playUIClose();
+      if (overlay) overlay.style.animation = 'fadeOut 0.3s ease forwards';
+      setTimeout(() => {
+        applyAscension(this.P, weaponId, ascensionId);
+        this.currentUpgradePool = [];
+        hideOverlay();
+        if (overlay) overlay.style.animation = '';
+        this.paused = false;
+        if (this.P.xp >= this.P.xpNext) { const v = this.P.xp; this.P.xp = 0; this.addXp(v); }
+      }, 300);
+    }, 200);
   }
 
   _fireWeapons(dt) {
@@ -2256,39 +2271,64 @@ export class Game {
   levelUp() {
     this.paused = true;
     playLevelUp();
+    playUIOpen();
     const pool = buildPool(this.P);
     this.currentUpgradePool = pool;
-    const cards = pool.map(u => renderUpgradeCard(u, this.P, `window.__game.pickUpgrade('${u.id}')`)).join('');
+    const cards = pool.map(u => renderUpgradeCard(u, this.P, `window.__game.pickUpgrade('${u.id}', this)`)).join('');
     showOverlay(`
       <div style="color:#444;font-size:9px;letter-spacing:3px;margin-bottom:6px">// SYSTEM UPGRADE //</div>
       <div style="font-size:15px;color:#BF77FF;letter-spacing:2px;margin-bottom:4px">LEVEL ${this.P.level} — CHOOSE ONE</div>
       <div style="font-size:9px;color:#444;letter-spacing:2px;margin-bottom:18px">weapon + passive choices every level</div>
-      <div class="upg-grid">${cards}</div>`);
+      <div class="upg-grid">${cards}</div>`, 'levelup-screen');
   }
 
-  pickUpgrade(id) {
-    if (id.startsWith('asc_')) {
-      const wid = id.slice(4);
-      const ascensionOptions = this.currentUpgradePool.find(option => option.id === id)?.options || [];
-      if (ascensionOptions.length) {
-        showAscensionDraft(wid, ascensionOptions, ascensionId => {
-          this.pickAscension(wid, ascensionId);
-        });
-        return;
+  pickUpgrade(id, pickedCard = null) {
+    playUISelect();
+    const cards = document.querySelectorAll('.uc');
+    cards.forEach(card => {
+      card.classList.remove('selected', 'dismissed');
+      if (card === pickedCard) card.classList.add('selected');
+      else card.classList.add('dismissed');
+    });
+
+    const finalizePick = () => {
+      if (id.startsWith('asc_')) {
+        const wid = id.slice(4);
+        const ascensionOptions = this.currentUpgradePool.find(option => option.id === id)?.options || [];
+        if (ascensionOptions.length) {
+          this._screenFlash = { col: '#FFFFFF', alpha: 0.6, life: 0.3 };
+          setTimeout(() => {
+            showAscensionDraft(wid, ascensionOptions, (ascensionId, pickedAscensionCard) => {
+              this.pickAscension(wid, ascensionId, pickedAscensionCard);
+            });
+            playAscensionOpen();
+          }, 200);
+          return;
+        }
       }
-    }
-    applyUpgrade(id, this.P);
-    this.currentUpgradePool = [];
-    hideOverlay();
-    this.paused = false;
-    if (this.P.xp >= this.P.xpNext) { const v = this.P.xp; this.P.xp = 0; this.addXp(v); }
+      applyUpgrade(id, this.P);
+      this.currentUpgradePool = [];
+      hideOverlay();
+      this.paused = false;
+      if (this.P.xp >= this.P.xpNext) { const v = this.P.xp; this.P.xp = 0; this.addXp(v); }
+    };
+
+    setTimeout(() => {
+      const overlay = document.getElementById('overlay');
+      if (overlay) overlay.style.animation = 'fadeOut 0.15s ease forwards';
+      setTimeout(() => {
+        if (overlay) overlay.style.animation = '';
+        finalizePick();
+      }, 150);
+    }, 220);
   }
 
   endGame() {
     this.running = false;
     this.setPlaytestToggleVisible(false);
     stopBossMusic();
-    playDeath();
+    document.getElementById('death-vignette')?.classList.add('active');
+    playDeathSound();
     const recordSummary = recordRun(this.P.char, {
       time: this.gt,
       kills: this.killCount,
@@ -2315,16 +2355,18 @@ export class Game {
           return `<div class="death-list-line">${prefix}<span>${synergy.label}</span></div>`;
         }).join('')
       : '<div class="death-empty">- none -</div>';
-    showOverlay(`
+    const deathHTML = `
       <div class="death-shell">
-        <div class="ov-title" style="color:#E24B4A;font-size:22px">FLATLINED</div>
+        <div class="ov-title glitch-text" style="color:#E24B4A;font-size:22px">FLATLINED</div>
         <div class="death-char" style="color:${char.col}">${char.name}</div>
         <div class="death-section">
           <div class="panel-label">RUN STATS</div>
           <div class="death-stats">
-            <div class="death-list-line"><span>TIME SURVIVED</span><strong>${formatRunTime(this.gt)}${renderBestMark(bestFields, 'bestTime')}</strong></div>
-            <div class="death-list-line"><span>KILLS</span><strong>${this.killCount}${renderBestMark(bestFields, 'mostKills')}</strong></div>
-            <div class="death-list-line"><span>LEVEL REACHED</span><strong>${this.P.level}${renderBestMark(bestFields, 'highestLevel')}</strong></div>
+            <div class="death-stat"><div class="death-list-line"><span>OPERATOR</span><strong>${char.name}</strong></div></div>
+            <div class="death-stat"><div class="death-list-line"><span>TIME SURVIVED</span><strong>${formatRunTime(this.gt)}${renderBestMark(bestFields, 'bestTime')}</strong></div></div>
+            <div class="death-stat"><div class="death-list-line"><span>KILLS</span><strong>${this.killCount}${renderBestMark(bestFields, 'mostKills')}</strong></div></div>
+            <div class="death-stat"><div class="death-list-line"><span>LEVEL REACHED</span><strong>${this.P.level}${renderBestMark(bestFields, 'highestLevel')}</strong></div></div>
+            <div class="death-stat"><div class="death-list-line"><span>SYNERGIES FOUND</span><strong>${this.runDiscoveries.size}</strong></div></div>
           </div>
         </div>
         <div class="death-section">
@@ -2335,12 +2377,15 @@ export class Game {
           <div class="panel-label">SYNERGIES THIS RUN</div>
           <div class="death-stats">${synergiesHtml}</div>
         </div>
-        <div class="menu-actions">
-          <button class="btn" onclick="${this.playtestMode ? 'window.__game.restartPlaytestRun()' : 'window.__game.newRun(window.__game.getSelectedCharacter())'}">${this.playtestMode ? 'RESTART TEST' : 'RUN AGAIN'}</button>
-          <button class="btn btn-secondary" onclick="window.__game.showMainMenu()">MENU</button>
+        <div class="death-buttons menu-actions">
+          <button class="btn ui-btn-press" onclick="window.__game.restartAfterDeath()">${this.playtestMode ? 'RESTART TEST' : 'RUN AGAIN'}</button>
+          <button class="btn btn-secondary ui-btn-press" onclick="window.__game.returnToMenuFromOverlay()">MENU</button>
         </div>
       </div>
-      `, 'death-screen');
+      `;
+    setTimeout(() => {
+      showOverlay(deathHTML, 'death-screen');
+    }, 400);
   }
 
   showMainMenu() {
@@ -2348,9 +2393,11 @@ export class Game {
     this.paused = false;
     this.setPlaytestToggleVisible(false);
     stopBossMusic();
-    const char = this.getSelectedCharacter();
+    const selectedId = this.menuSelectedCharId;
+    const char = selectedId ? CHARACTERS[selectedId] : null;
     const cards = Object.values(CHARACTERS).map(c => {
-      const active = c.id === char.id ? ' active' : '';
+      const active = c.id === char?.id ? ' active selected' : '';
+      const unselected = selectedId && c.id !== selectedId ? ' unselected' : '';
       const weapon = WDEFS[c.startWeapon];
       const passiveCopy = c.id === 'ghost'
         ? '20% dodge chance. Freeze setups and kite hard.'
@@ -2367,17 +2414,17 @@ export class Game {
         : c.id === 'bruiser'
           ? '+35% damage below 50% HP'
           : '2x XP from stunned kills';
-      return `<button class="char-card${active}" onclick="window.__game.selectCharacter('${c.id}')">
+      return `<button class="char-card ui-btn-press${active}${unselected}" onclick="window.__game.selectCharacter('${c.id}')">
         <div class="char-card-top">
           <span class="char-sigil" style="color:${c.col}">◆</span>
           <span class="char-name">${c.name}</span>
-          <span class="char-tag">${c.id === char.id ? 'SELECTED' : 'READY'}</span>
+          <span class="char-tag">${c.id === char?.id ? 'SELECTED' : 'READY'}</span>
         </div>
         <div class="char-compact-row">
           <span class="char-weapon" style="color:${weapon.col}">${weapon.icon} ${weapon.name}</span>
           <span class="char-speed">SPD ${c.spd}</span>
         </div>
-        ${c.id === char.id ? `
+        ${c.id === char?.id ? `
           <div class="char-inline-meta">
             <div class="char-inline-line"><span>PASSIVE</span><strong>${passiveLabel}</strong></div>
             <div class="char-inline-line"><span>EFFECT</span><strong>${passiveValue}</strong></div>
@@ -2390,19 +2437,19 @@ export class Game {
       <div class="menu-shell">
         <div class="menu-brand compact">
           <div class="menu-kicker">NEURAL SURVIVAL ROGUELITE</div>
-          <div class="menu-title">INFINITE ROGUE</div>
+          <div class="menu-title anim-slide-down">INFINITE ROGUE</div>
           <div class="menu-sub">// choose an operator and jack in //</div>
         </div>
         <section class="menu-panel menu-panel-operators">
           <div class="menu-panel-head">
             <div class="panel-label">OPERATORS</div>
-            <button class="menu-link-btn" onclick="window.__game.openRecords()">RECORDS</button>
+            <button class="menu-link-btn ui-btn-press" onclick="window.__game.openRecordsFromMenu()">RECORDS</button>
           </div>
           <div class="char-grid compact">${cards}</div>
         </section>
         <div class="menu-footer">
-          <button class="btn menu-start-btn" onclick="window.__game.newRun(window.__game.getSelectedCharacter())">JACK IN</button>
-          <button class="menu-link-btn" onclick="window.__game.openPlaytestLab()">PLAYTEST LAB</button>
+          <button id="start-btn" class="btn menu-start-btn ui-btn-press${char ? ' visible' : ''}" onclick="window.__game.startSelectedCharacter()">JACK IN</button>
+          <button class="menu-link-btn ui-btn-press" onclick="window.__game.openPlaytestLabFromMenu()">PLAYTEST LAB</button>
         </div>
       </div>`, 'main-menu');
   }
@@ -2415,13 +2462,42 @@ export class Game {
     showRecordsScreen(() => this.showMainMenu());
   }
 
+  openRecordsFromMenu() {
+    playUIClick();
+    this.openRecords();
+  }
+
+  openPlaytestLabFromMenu() {
+    playUIClick();
+    this.openPlaytestLab();
+  }
+
+  startSelectedCharacter() {
+    if (!this.menuSelectedCharId) return;
+    playUIClick();
+    this.newRun(this.getSelectedCharacter());
+  }
+
+  restartAfterDeath() {
+    playUIClick();
+    if (this.playtestMode) this.restartPlaytestRun();
+    else this.newRun(this.getSelectedCharacter());
+  }
+
+  returnToMenuFromOverlay() {
+    playUIClick();
+    this.showMainMenu();
+  }
+
   getSelectedCharacter() {
     return CHARACTERS[this.selectedCharId] || CHARACTERS.ghost;
   }
 
   selectCharacter(id) {
     if (!CHARACTERS[id]) return;
+    playUISelect();
     this.selectedCharId = id;
+    this.menuSelectedCharId = id;
     this.playtestBuild = sanitizePlaytestBuild(this.playtestBuild, CHARACTERS[id]);
     this.showStart();
   }

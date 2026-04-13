@@ -419,6 +419,33 @@ export function playDiscoverySound() {
   noiseShot(0.045, 0.002, 0.06, 'highpass', 2600);
 }
 
+export function playUIClick() {
+  osc('triangle', 800, 0.045, 0.005, 0.06, 700);
+}
+
+export function playUIOpen() {
+  osc('sine', 200, 0.05, 0.03, 0.12, 600);
+}
+
+export function playUIClose() {
+  osc('sine', 600, 0.035, 0.002, 0.12, 200);
+}
+
+export function playUISelect() {
+  osc('triangle', 600, 0.06, 0.004, 0.1, 500);
+  osc('sine', 900, 0.04, 0.003, 0.1, 720);
+}
+
+export function playDeathSound() {
+  osc('triangle', 300, 0.16, 0.01, 0.8, 60);
+}
+
+export function playAscensionOpen() {
+  oscAt(0, 'sine', 400, 0.04, 0.05, 0.45);
+  oscAt(0.05, 'triangle', 600, 0.045, 0.05, 0.45);
+  oscAt(0.1, 'sine', 800, 0.035, 0.05, 0.45);
+}
+
 export function playXp() {
   // tiny high blip — quiet, pleasant
   osc('sine', 1400, 0.06, 0.003, 0.04);
