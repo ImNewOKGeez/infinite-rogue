@@ -4,7 +4,7 @@ import { CHARACTERS, addWeapon, getAscension, getOwnedWeaponIds, getWeaponLevel,
 import { enemies, resetEnemies, spawnEnemy, pruneEnemies, dist2, nearest, setExtraTarget, clearExtraTarget, tickEnemyStatus, updateEnemyFreezeState, applyStun, applySlow, applyKnockback } from './enemies.js';
 import { EMP_SCALING, MOLOTOV_TIERS, WDEFS, bullets, resetBullets, resetPulseClusters, handleCryoImpact, updateCryoFields, getPulseHitDamage, triggerPulseExplosion, spawnBullet, applyFreezeMeter, spawnPulseClusters } from './weapons.js';
 import { PASSIVES, buildPool, applyUpgrade, applyAscension } from './upgrades.js';
-import { particles, resetParticles, updateParticles, addRing, addBurst, addDot, addArc, drawParticles } from './particles.js';
+import { particles, resetParticles, updateParticles, addRing, addBurst, addDot, addArc, addFrostTrail, addStunAura, drawParticles } from './particles.js';
 import { mkBoss, updateBoss, drawBoss, hitBoss, BOSS_SPAWN_TIME, BOSS_RESPAWN_DELAY } from './boss.js';
 import { SYNERGIES, getSave, recordDiscovery, recordRun, getRatingTier, RATING_COLORS } from './progression.js';
 import { WORLD_BOUNDARY_WARN, WORLD_H, WORLD_W } from './constants.js';
@@ -2014,6 +2014,31 @@ export class Game {
       if (!e || e.hp <= 0) return;
       updateEnemyFreezeState(e, dt, P);
       tickEnemyStatus(e, dt);
+
+      // Emit particle trails for frozen enemies
+      if (e.frozen) {
+        if (e._freezeParticleTimer === undefined) e._freezeParticleTimer = 0;
+        e._freezeParticleTimer++;
+        if (e._freezeParticleTimer >= 3) {
+          addFrostTrail(e.x, e.y);
+          e._freezeParticleTimer = 0;
+        }
+      } else {
+        e._freezeParticleTimer = 0;
+      }
+
+      // Emit particle trails for stunned enemies
+      if (e.stunned && e.stunT > 0) {
+        if (e._stunParticleTimer === undefined) e._stunParticleTimer = 0;
+        e._stunParticleTimer++;
+        if (e._stunParticleTimer >= 2) {
+          addStunAura(e.x, e.y);
+          e._stunParticleTimer = 0;
+        }
+      } else {
+        e._stunParticleTimer = 0;
+      }
+
       if (!e.stunned || (e.stunT || 0) <= 0) {
         e.isSecondaryCascade = false;
         e._cascaded = false;
@@ -2117,10 +2142,23 @@ export class Game {
       const dy = P.y - item.y;
       const d = Math.sqrt(dx * dx + dy * dy);
       if (d < P.mag) {
+        if (!item.magnetizing) {
+          item.magnetizing = true;
+          item.magnetizeTime = 0;
+          item.magnetizeDuration = 0.25;
+        }
         item.x += (P.x - item.x) * 5 * dt;
         item.y += (P.y - item.y) * 5 * dt;
       }
-      if (d < P.r + item.r) {
+      if (item.magnetizing) {
+        item.magnetizeTime += dt;
+        if (item.magnetizeTime >= item.magnetizeDuration) {
+          if (d < P.r + item.r) {
+            onCollect(item);
+            return false;
+          }
+        }
+      } else if (d < P.r + item.r) {
         onCollect(item);
         return false;
       }
@@ -3207,6 +3245,20 @@ export class Game {
   drawGems() {
     const { ctx } = this;
     this.gems.forEach(g => {
+      let scale = 1;
+      let alpha = 1;
+      if (g.magnetizing) {
+        const progress = g.magnetizeTime / g.magnetizeDuration;
+        scale = 1.0 - (progress * 0.7);
+        alpha = 1.0 - progress;
+      }
+      ctx.save();
+      ctx.globalAlpha = alpha;
+      if (scale !== 1) {
+        ctx.translate(g.x, g.y);
+        ctx.scale(scale, scale);
+        ctx.translate(-g.x, -g.y);
+      }
       ctx.fillStyle = '#7F77DD';
       ctx.beginPath();
       ctx.arc(g.x, g.y, g.r, 0, Math.PI * 2);
@@ -3215,6 +3267,7 @@ export class Game {
       ctx.beginPath();
       ctx.arc(g.x - 1, g.y - 2, 1.5, 0, Math.PI * 2);
       ctx.fill();
+      ctx.restore();
     });
   }
 

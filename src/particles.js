@@ -13,6 +13,12 @@ export function updateParticles(dt) {
       return p.life > 0 && p.r > 0;
     }
     if (p.tp === 'arc' || p.tp === 'spoke') return p.life > 0;
+    if (p.tp === 'frost' || p.tp === 'stun') {
+      p.x += (p.vx || 0) * dt;
+      p.y += (p.vy || 0) * dt;
+      p.r *= 0.88;
+      return p.life > 0 && p.r > 0;
+    }
     p.x += (p.vx || 0) * dt;
     p.y += (p.vy || 0) * dt;
     p.r *= 0.88;
@@ -43,6 +49,40 @@ export function addDot(x, y, col, r = 5, life = 0.1) {
 export function addArc(x1, y1, x2, y2, life = 0.3, col = '#BF77FF', opts = {}) {
   if (particles.length >= MAX_PARTICLES) return;
   particles.push({ tp: 'arc', x1, y1, x2, y2, life, lt: life, col, ...opts });
+}
+
+export function addFrostTrail(x, y) {
+  const room = MAX_PARTICLES - particles.length;
+  if (room <= 0) return;
+  for (let i = 0; i < 2; i++) {
+    particles.push({
+      tp: 'frost',
+      x: x + (Math.random() - 0.5) * 20,
+      y: y + (Math.random() - 0.5) * 20,
+      vx: (Math.random() - 0.5) * 100,
+      vy: (Math.random() - 0.5) * 100,
+      life: 0.8,
+      lt: 0.8,
+      col: '#00CFFF',
+      r: 3 + Math.random() * 2
+    });
+  }
+}
+
+export function addStunAura(x, y) {
+  const room = MAX_PARTICLES - particles.length;
+  if (room <= 0) return;
+  particles.push({
+    tp: 'stun',
+    x,
+    y,
+    vx: (Math.random() - 0.5) * 20,
+    vy: (Math.random() - 0.5) * 20,
+    life: 0.4,
+    lt: 0.4,
+    col: '#BF77FF',
+    r: 3 + Math.random()
+  });
 }
 
 export function drawParticles(ctx) {
@@ -92,6 +132,18 @@ export function drawParticles(ctx) {
       ctx.lineTo(p.x2, p.y2);
       ctx.stroke();
       ctx.restore();
+    } else if (p.tp === 'frost') {
+      ctx.fillStyle = p.col;
+      ctx.globalAlpha = a;
+      ctx.beginPath(); ctx.arc(p.x, p.y, Math.max(0.1, p.r), 0, Math.PI * 2); ctx.fill();
+    } else if (p.tp === 'stun') {
+      ctx.globalAlpha = a;
+      ctx.fillStyle = p.col;
+      const pulse = Math.sin((1 - a) * Math.PI) * 0.5 + 0.5;
+      ctx.globalAlpha = pulse * 0.6;
+      ctx.beginPath();
+      ctx.arc(p.x, p.y, Math.max(0.1, p.r), 0, Math.PI * 2);
+      ctx.fill();
     } else {
       ctx.globalAlpha = a;
       ctx.fillStyle = p.col;
