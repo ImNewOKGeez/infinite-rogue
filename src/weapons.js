@@ -30,7 +30,7 @@ export const ASCENSIONS = {
     {
       id: 'frost_field',
       name: 'FROST FIELD',
-      description: 'Removes all projectiles. Generates a 150px frost aura around the player that builds freeze meter and slows all enemies inside it.',
+      description: 'Removes Cryo projectiles. Generates a 150px frost aura that slows instantly, freezes after sustained exposure, and deals chip damage over time.',
     },
     {
       id: 'shatter',
@@ -110,7 +110,7 @@ export const ASCENSIONS = {
     {
       id: 'inferno',
       name: 'INFERNO',
-      description: 'All fire pools merge into one massive zone. Combined radius, 5s duration, 50% more damage.',
+      description: 'Throws one oversized bottle regardless of level count. Creates a single pool at 1.8x radius, lasts 8 seconds, deals 50% more damage, and fires at half rate.',
     },
     {
       id: 'bouncing_cocktail',
@@ -808,13 +808,6 @@ export function spawnPulseClusters(x, y, dmg, maxGeneration, options = {}) {
   spawnPulseClusterBombs(x, y, dmg, 1, maxGeneration, options);
 }
 
-function getPulseMaxClusterGeneration(lvl) {
-  if (lvl >= 5) return 4;
-  if (lvl >= 4) return 3;
-  if (lvl >= 3) return 2;
-  if (lvl >= 2) return 1;
-  return 0;
-}
 
 function updatePulseClusters(game, dt) {
   for (let i = pulseClusters.length - 1; i >= 0; i--) {

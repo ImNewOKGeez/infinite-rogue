@@ -25,14 +25,14 @@ function getAudioCtx() {
 export function initAudio() {
   try {
     getAudioCtx();
-  } catch (e) {}
+  } catch (_e) {}
 }
 
 export function resumeAudio() {
   try {
     const ctx = getAudioCtx();
     if (ctx.state === 'suspended') ctx.resume();
-  } catch (e) {}
+  } catch (_e) {}
 }
 
 // --- internal helpers ---
@@ -44,7 +44,7 @@ function n() {
 function allowEnemyAudio() {
   try {
     getAudioCtx();
-  } catch (e) {
+  } catch (_e) {
     return false;
   }
   const t = n();
@@ -549,7 +549,7 @@ export function stopBossMusic() {
   _bossMusicNodes.forEach(node => {
     try {
       node.stop();
-    } catch (e) {}
+    } catch (_e) {}
   });
   _bossMusicNodes = [];
 }

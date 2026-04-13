@@ -94,7 +94,7 @@ export function loadSave() {
   try {
     const raw = window.localStorage.getItem(SAVE_KEY);
     parsed = raw ? JSON.parse(raw) : null;
-  } catch (err) {
+  } catch (_err) {
     parsed = null;
   }
   currentSave = mergeSave(parsed || DEFAULT_SAVE);
@@ -105,7 +105,7 @@ export function writeSave(save) {
   currentSave = mergeSave(save);
   try {
     window.localStorage.setItem(SAVE_KEY, JSON.stringify(currentSave));
-  } catch (err) {}
+  } catch (_err) {}
 }
 
 export function getSave() {

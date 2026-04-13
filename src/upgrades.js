@@ -21,7 +21,7 @@ export function buildPool(p, options = {}) {
     else if (lvl === 0 && slots < 4) weps.push({ id: 'wn_' + wid, type: 'wep', wid, lvl: 1, isNew: true });
   });
 
-  const pas = [...PASSIVES].sort(() => Math.random() - 0.5);
+  const pas = shuffledCopy(PASSIVES);
   const weaponPool = [...weps];
   const pool = [];
 
@@ -48,7 +48,7 @@ export function buildPool(p, options = {}) {
 
     if (ascEligible.length > 0 && Math.random() < 0.40 && pool.length) {
       const wid = ascEligible[Math.floor(Math.random() * ascEligible.length)];
-      const ascPool = [...ASCENSIONS[wid]].sort(() => Math.random() - 0.5);
+      const ascPool = shuffledCopy(ASCENSIONS[wid]);
       const ascCard = {
         id: 'asc_' + wid,
         type: 'ascension',
@@ -82,11 +82,11 @@ export function applyUpgrade(id, p) {
   }
 }
 
-export function applyAscension(p, weaponId, ascensionId) {
+export function applyAscension(p, weaponId, ascensionId, options = {}) {
   if (!p.ascensions) p.ascensions = {};
   p.ascensions[weaponId] = ascensionId;
 
-  if (weaponId === 'cryo') {
+  if (weaponId === 'cryo' && !options.preview) {
     p.ft.cryo = 0;
     for (let i = bullets.length - 1; i >= 0; i--) {
       if (bullets[i].meta?.type === 'cryo') bullets.splice(i, 1);
@@ -96,4 +96,13 @@ export function applyAscension(p, weaponId, ascensionId) {
 
 function pickRandom(arr) {
   return arr.splice(Math.floor(Math.random() * arr.length), 1)[0];
+}
+
+function shuffledCopy(items) {
+  const copy = [...items];
+  for (let i = copy.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [copy[i], copy[j]] = [copy[j], copy[i]];
+  }
+  return copy;
 }
