@@ -1,7 +1,7 @@
 import { BOSS_SPAWN_TIME } from './boss.js';
 import { wStats, weaponUnlockDesc } from './gameUi.js';
 import { addWeapon, mkPlayer, mkWeaponState } from './player.js';
-import { PASSIVES, applyAscension } from './upgrades.js';
+import { PASSIVES, applyAscension, applyAscensionTier } from './upgrades.js';
 import { ASCENSIONS, WDEFS } from './weapons.js';
 
 export const LAB_WEAPON_INPUTS = {
@@ -89,6 +89,7 @@ export function createPlaytestBuild(char) {
     weapons: Object.fromEntries(Object.keys(WDEFS).map(wid => [wid, 0])),
     passives: Object.fromEntries(PASSIVES.map(passive => [passive.id, 0])),
     ascensions: Object.fromEntries(Object.keys(WDEFS).map(wid => [wid, null])),
+    ascensionTiers: Object.fromEntries(Object.keys(WDEFS).map(wid => [wid, 0])),
   };
   build.weapons[char.startWeapon] = 1;
   return build;
@@ -101,6 +102,7 @@ export function sanitizePlaytestBuild(build, char) {
     weapons: { ...base.weapons, ...(build?.weapons || {}) },
     passives: { ...base.passives, ...(build?.passives || {}) },
     ascensions: { ...base.ascensions, ...(build?.ascensions || {}) },
+    ascensionTiers: { ...base.ascensionTiers, ...(build?.ascensionTiers || {}) },
   };
 
   Object.keys(next.weapons).forEach(wid => {
@@ -116,9 +118,13 @@ export function sanitizePlaytestBuild(build, char) {
     const chosen = next.ascensions[wid];
     if ((next.weapons[wid] || 0) < 5) {
       next.ascensions[wid] = null;
+      next.ascensionTiers[wid] = 0;
       return;
     }
     next.ascensions[wid] = options.some(option => option.id === chosen) ? chosen : null;
+    next.ascensionTiers[wid] = next.ascensions[wid]
+      ? clamp(Math.round(next.ascensionTiers[wid] || 1), 1, 5)
+      : 0;
   });
 
   return next;
@@ -144,6 +150,7 @@ export function previewPlaytestPlayer(char, build) {
     if (!ascensionId) return;
     if ((safeBuild.weapons[wid] || 0) < 5) return;
     applyAscension(player, wid, ascensionId, { preview: true });
+    applyAscensionTier(player, wid, safeBuild.ascensionTiers?.[wid] || 1);
   });
 
   player.hp = player.maxHp;
@@ -160,6 +167,7 @@ export function renderPlaytestLab(build, char, isRunActive, worldDebug, labState
     const weapon = WDEFS[wid];
     const lvl = safeBuild.weapons[wid] || 0;
     const selected = safeBuild.ascensions?.[wid] || null;
+    const ascTier = safeBuild.ascensionTiers?.[wid] || 0;
     const locked = lvl < 5;
     const optionButtons = options.map(option => `
       <button
@@ -179,7 +187,8 @@ export function renderPlaytestLab(build, char, isRunActive, worldDebug, labState
           </div>
           <button class="playtest-clear" ${selected ? '' : 'disabled'} onclick="window.__game.playtestSetAscension('${wid}', null)">CLEAR</button>
         </div>
-        <div class="playtest-item-copy">${selected ? `Selected: ${options.find(option => option.id === selected)?.name || 'None'}` : 'No ascension selected'}</div>
+        <div class="playtest-item-copy">${selected ? `Selected: ${options.find(option => option.id === selected)?.name || 'None'} T${ascTier || 1}` : 'No ascension selected'}</div>
+        ${selected ? `<div class="playtest-card-top"><div class="playtest-item-copy">Ascension tier</div><div class="playtest-stepper"><button class="playtest-step" ${(ascTier || 1) > 1 ? '' : 'disabled'} onclick="window.__game.playtestSetAscensionTier('${wid}', -1)">-</button><span class="playtest-value">${ascTier || 1}</span><button class="playtest-step" ${(ascTier || 1) < 5 ? '' : 'disabled'} onclick="window.__game.playtestSetAscensionTier('${wid}', 1)">+</button></div></div>` : ''}
         <div class="playtest-ascension-list">${optionButtons}</div>
       </div>`;
   }).join('');

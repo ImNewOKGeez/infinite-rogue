@@ -148,6 +148,7 @@ Broad by intent. The game should be readable for casual players and strategicall
 - Three playable characters: Ghost, Bruiser, Hacker.
 - Seven total weapons in the pool, but only four weapon slots can be owned in a run.
 - Weapon upgrades currently run from level 1 to level 5.
+- Ascended weapons now continue from Ascension Tier 1 to Tier 5 through normal upgrade drafts.
 - Six run-wide passive upgrades.
 - XP gems with magnet pickup behavior and merge logic.
 - Heal orbs that restore 5% max HP and are globally throttled.
@@ -160,11 +161,11 @@ Broad by intent. The game should be readable for casual players and strategicall
 - Persistent synergy discovery tracking with first-discovery pause overlay.
 - Procedural audio for weapons, hits, XP, surges, boss warning/phases/death, boss music, plus dedicated UI open/close/click/select/ascension/death stingers.
 - Shared UI polish system for main menu, level-up, death, records, discovery, and Ascension overlays using CSS transitions/keyframes, button press feedback, a dedicated JACK IN screen-transition layer, a menu-background animation system, red death vignette lead-in, low-health pulsing vignette feedback, and Ascension screen flash/shimmer beats.
-- HUD weapon slots now show per-weapon level dots in the weapon colour and swap to an `ASC` tag when that weapon is Ascended.
+- HUD weapon slots now show per-weapon level dots in the weapon colour and swap to an `A1` to `A5` Ascension-tier tag when that weapon is Ascended.
 - HUD includes a surge timer warning strip beneath the XP bar that fills over the 40-second cadence, pulses red near surge, and stays visibly active during surge windows.
 - Stronger damage feedback including screen flash, low-health vignette, HP lag bar, barrier-heal HP bar segment, and Barrier absorb hit feedback via ripple plus dedicated absorb audio.
 - Cryo freeze buildup is live with per-enemy freeze meters, thaw cooldowns, frost visuals, thaw burst feedback, upgraded Cryo Storm/Nova/Permafrost readability, Glacial Lance charge-and-release behavior, and Frost Field's slow-first aura with minimal chip damage.
-- Playtest lab overlay with instant weapon/passive tier editing, ascension selection, world/camera debug readouts, time skip controls, instant loadout injection, and one-click late-game/boss/max-weapon presets.
+- Playtest lab overlay with instant weapon/passive tier editing, ascension selection plus Ascension-tier stepping, world/camera debug readouts, time skip controls, instant loadout injection, and one-click late-game/boss/max-weapon presets.
 - Capacitor configuration plus committed Android project are live in-repo.
 - Web build now uses relative asset paths plus a wired PWA manifest/icon set so the same `dist/` works for Netlify drag-drop and Capacitor sync.
 - Shared UI, playtest, menu-background, Arc Blade, and render helpers are now split into dedicated modules (`gameUi.js`, `playtest.js`, `menuBackground.js`, `arcBlade.js`, `renderUtils.js`) so `game.js` carries less duplicate view/helper code.
@@ -236,8 +237,9 @@ The live weapon system is simple and numeric right now:
 - Level 4: four-projectile spread.
 - Level 5: five-projectile widest spread.
 - Current implementation note: Cryo slows on hit, builds a freeze meter by weapon level, freezes targets for 1.5s at threshold, and can spread partial freeze buildup from newly frozen targets.
-- `cryo_storm`: frozen hits reset the freeze timer, fire bright white-cyan shard bursts, and play a distinct crystalline trigger sound once per trigger frame.
-- `permafrost`: frozen enemies never thaw and now render with a simpler deeper-blue frozen body plus a single dark-blue ring for a cleaner read.
+- All live Cryo Ascensions now continue from `T1` to `T5`, scaling their existing fantasy through stronger shard counts, frozen-target damage, nova size/damage, lance cadence/spread, field size/freeze speed, or shatter reliability.
+- `cryo_storm`: frozen enemies that die fire bright white-cyan shard bursts, and play a distinct crystalline trigger sound once per trigger frame.
+- `permafrost`: Cryo becomes a darker-blue shot that applies heavy size-scaled freeze build on hit, stays at 1 projectile through `T2`, grows to 3 projectiles at `T3-T4`, 5 at `T5`, keeps normal Cryo projectile size/speed, gains `+2` pierce each tier (`2/4/6/8/10`), uses a deeper thudding fire sound, and makes frozen enemies spread freeze faster at higher tiers.
 - `cryo_nova`: frozen kills detonate for 80% of the dead enemy's max HP in a 150px radius, seed freeze buildup on survivors, and use a shortened white-plus-cyan ring pulse with a brief cyan screen flash.
 - `glacial_lance`: Cryo now counts shots toward the lance; every third Cryo fire is replaced by the lance, and level 5 releases a full five-beam lance spread on that third shot.
 - `frost_field`: nearby enemies are slowed immediately, freeze after 1.5s of continuous exposure, and take base damage at `P.dmg * 5` per second so the aura always contributes noticeable chip pressure.
@@ -251,6 +253,7 @@ The live weapon system is simple and numeric right now:
 - Level 4: cluster chain extends another generation.
 - Level 5: cluster chain extends to four total generations.
 - Frozen-target bonus damage logic is wired, but depends on freeze being active.
+- All live Pulse Ascensions now continue from `T1` to `T5`, scaling their existing behavior through stronger proc rates, pull strength, overload cadence, mine stockpile/blast size, or fragment count/blast size.
 - `overload_round`: every third Pulse shot becomes the overloaded shell; the HUD tracks the live 3-shot counter.
 
 #### EMP
@@ -260,6 +263,7 @@ The live weapon system is simple and numeric right now:
 - Level 3: 245px burst, 1.6s stun, x1.7 damage multiplier.
 - Level 4: 295px burst, 1.8s stun, x2.2 damage multiplier.
 - Level 5: 350px burst, 2.0s stun, x2.8 damage multiplier.
+- All live EMP Ascensions now continue from `T1` to `T5`, scaling their existing behavior through larger cascade bursts, wider/stronger Triple Pulse rings, and denser higher-damage Arc Discharge chains.
 - `ASCENSIONS.emp` currently defines `cascade_pulse`, `triple_pulse`, and `arc_discharge`.
 
 #### Swarm
@@ -269,6 +273,7 @@ The live weapon system is simple and numeric right now:
 - Level 4: 5 drones.
 - Level 5: 6 drones.
 - Drones orbit, acquire nearby targets, seek, hit, and return.
+- All live Swarm Ascensions now continue from `T1` to `T5`, scaling their existing behavior through larger nova detonations, stronger/longer frenzy states, or longer-lived harder-hitting split drones.
 - `FRENZY` now grants 3s of 2x speed and 2x damage, then applies a 3s per-drone cooldown before that drone can frenzy again.
 - `ASCENSIONS.swarm` currently defines `nova_swarm`, `frenzy`, and `split_swarm`.
 
@@ -276,6 +281,7 @@ The live weapon system is simple and numeric right now:
 - Display name: `JAC'S BOOMERANG`.
 - Live behavior: curved boomerang discs orbit out and back around the player; runtime logic lives in `game.js`.
 - Current implementation note: Arc Blade has a live Ascension pool entry but only one option right now.
+- `saw_blade` now continues from `T1` to `T5`, scaling the same orbital saw fantasy through larger orbit, radius, contact cadence, and damage.
 - `ASCENSIONS.arcblade` currently defines `saw_blade`.
 
 #### Molotov
@@ -286,6 +292,7 @@ The live weapon system is simple and numeric right now:
 - Level 4: 2 bottles in a fan, 90px pools, 3.0s duration, 1.8s fire rate, x11 damage multiplier.
 - Level 5: 3 bottles in a fan, 100px pools, 3.0s duration, 1.6s fire rate, x12 damage multiplier.
 - Live behavior: bottles use sector-based targeting, lead enemies slightly so pools land ahead of their path, land in persistent fire pools, and deal continuous damage over time to enemies inside them.
+- All live Molotov Ascensions now continue from `T1` to `T5`, scaling their existing behavior through bigger Inferno pools, more Bouncing Cocktail hops/pool size, or denser Cluster Molotov sub-bottle spreads.
 - `inferno`: throws one oversized bottle regardless of level count, creates one pool with radius `tier.radius * 1.8`, lasts 8 seconds, deals 50% more damage, and fires at half the normal cadence (`tier.fireRate * 2.0`).
 - `ASCENSIONS.molotov` currently defines `inferno`, `bouncing_cocktail`, and `cluster_molotov`.
 
@@ -317,6 +324,7 @@ The live weapon system is simple and numeric right now:
 - New weapons are only offered while the player owns fewer than 4 weapons.
 - Owned weapons can level up to 5.
 - Eligible level-5 weapons can inject an Ascension card into normal level-up drafts at a 40% chance; the Ascension card replaces one of the three normal cards and then opens the existing three-option Ascension draft.
+- Once a weapon is Ascended, that chosen Ascension can keep leveling from T1 to T5 through normal upgrade cards.
 - Boss kills currently reuse the same pool structure in a dedicated reward draft.
 - Upgrade text should stay explicit and numeric wherever practical.
 
@@ -360,7 +368,7 @@ The live weapon system is simple and numeric right now:
 | Shooter | Circle | `#FFB627` | Holds range and fires slow projectiles |
 | Brute | Square | `#D4537E` | Slow, tanky, punishing contact damage |
 | Titan | Hexagon | `#8B0000` | Very slow elite with huge HP, heavy contact damage, a pulsing aura, strong stun resistance, and a much higher freeze threshold |
-| Juggernaut | Pentagon | `#FF6600` | Large control-breaker with high contact damage, full stun/slow/knock immunity, a permanent orange crackle aura, and a doubled freeze threshold |
+| Juggernaut | Pentagon | `#FF6600` | Large control-breaker with high contact damage, full stun/slow/freeze/knock immunity, and a permanent orange crackle aura |
 | Shield Leech | Diamond | `#1A6B3A` body / `#44FF88` shield | Slow support enemy that moves toward the nearest non-Leech enemy, redirects allied damage into a large shared shield bubble, and is capped at 2 active copies |
 
 ### Pressure rules
@@ -556,6 +564,13 @@ scripts/
 5. Keep moving gameplay systems toward easier future content addition.
 
 ## Changelog
+- 2026-04-13: Retuned Cryo Storm to match the intended Ascension tiers: frozen kills now emit evenly spaced shard bursts at `3/5/7/9/11` shards from `T1` to `T5`, replacing the old frozen-hit proc and denser shard-count progression.
+- 2026-04-13: Added Ascension tier progression for all live Ascensions so transformed weapons now continue from T1 to T5 via normal upgrade drafts, with per-Ascension scaling hooked into combat, HUD `A1-A5` slot tags, playtest-lab tier controls, and death-summary Ascension tier readouts.
+- 2026-04-13: Refined Permafrost's tier path into a heavy snowball progression: `T1-T2` fire one large projectile, `T3-T4` fire two, `T5` fires three, while keeping the darker-blue weighted projectile profile and swapping the default Cryo shot into a deeper thudding Permafrost fire sound.
+- 2026-04-13: Tuned Permafrost's snowball profile further by increasing projectile size sharply, reducing its fire rate again, and changing tier pierce to `2/4/6/8/10` so each Ascension tier adds 2 more pierce.
+- 2026-04-14: Reverted Permafrost projectile size and speed back to normal Cryo / T5 Cryo values while keeping the darker projectile color, higher pierce table, multi-projectile tier progression, deeper fire sound, and nearby freeze spread behavior.
+- 2026-04-14: Fixed Juggernauts so they are now fully immune to freeze as intended, matching their existing immunity to slow, stun, and knockback.
+- 2026-04-14: Changed Permafrost's on-hit freeze so it now scales with enemy size instead of always forcing a full freeze threshold; small enemies can still freeze quickly, while larger enemies like Brutes and Titans now require multiple hits.
 - 2026-04-13: Added XP gem magnetization animation with smooth scale-down and fade-out over 0.25s for snappy visual feedback during magnet pickup, and added persistent freeze/stun visual particle trails via cyan drifting frost particles (every 3 frames from frozen enemies) and violet pulsing stun particles (every 2 frames from stunned enemies) to improve late-game readability in high-density surge scenes.
 - 2026-04-13: Added visual hints (?) to empty weapon slots on HUD and death screen for discovery, and added run rating tiers (DEAD ON ARRIVAL / SURVIVOR / VETERAN / GHOST) to records screen based on survival time thresholds (< 2 min / < 4 min / < 6 min / 6+ min).
 - 2026-04-13: Added three QoL improvements: extended health bar visibility to 2 seconds after last hit, added wave-based enemy color brightening to show late-game enemies are stronger, and expanded death screen with enemy kill-type breakdown showing counts for runners, shooters, brutes, titans, juggernauts, and shield leeches.
@@ -573,6 +588,7 @@ scripts/
 - 2026-04-12: Reworked Molotov targeting to lead enemies with sector-based bottle selection, simplified `INFERNO` into a single oversized bottle/pool with no merge logic, and validated bounce/cluster branch execution before removing the temporary logs.
 - 2026-04-12: Added `LUKE'S MOLOTOV` as a seventh weapon with arcing bottle throws, persistent fire pools, Molotov Ascensions (`INFERNO`, `BOUNCING COCKTAIL`, `CLUSTER MOLOTOV`), dedicated throw/land audio, explicit player/new-run state resets, and updated documentation for the new runtime helpers.
 - 2026-04-12: Completed an audit-and-cleanup reconciliation pass with no gameplay changes: removed dead helper exports and stale debug logging, added an explicit particle reset on `newRun()`, aligned live Ascension text with implementation, cleaned unused asset/temp files, and updated this brief to match the current runtime state and file map.
+- 2026-04-13: Retuned Permafrost to match the intended Ascension tiers: `T1` now slows Cryo shots, adds instant freeze-on-hit plus 1 pierce, frozen enemies stay frozen until killed, and `T2-T5` now add +1 pierce per tier while frozen enemies spread freeze to nearby enemies at increasingly faster intervals.
 - 2026-04-12: Simplified Permafrost visuals down to a darker blue frozen body plus one clean ring, shortened Cryo Nova's white/cyan pulse rings, changed Glacial Lance from a 6-second timer to an every-third-shot counter with a 5-beam level-5 release and HUD dots, raised Frost Field chip damage to `P.dmg * 5` per second while confirming dashed-line resets, and removed Shatter screen flash entirely.
 - 2026-04-12: Upgraded Cryo Ascensions by brightening Cryo Storm shards plus trigger audio, making Permafrost enemies much louder visually, buffing Cryo Nova into a high-damage 150px detonation that seeds more freeze, redesigning Glacial Lance into a 6-second charged piercing shot while preserving normal Cryo fire, fixing Frost Field to slow first and freeze after sustained exposure while adding minimal chip damage, and capping Shatter flash cadence for readability.
 - 2026-04-12: Expanded the playtest lab with dev-only Time Skip and Instant Loadout panels, added late-game/boss/max-weapon presets, and documented the new lab controls here.
@@ -597,4 +613,3 @@ scripts/
 - 2026-04-09: Added `progression.js` with persistent personal bests, synergy discovery tracking, first-discovery reveal/audio, a records screen, and death-screen run record reporting.
 - 2026-04-09: Reworked the live boss into a longer three-phase encounter with higher durability, circling movement, telegraphed transitions, charge follow-ups, spiral pressure, late-fight barrages/mines, stronger boss-bar state feedback, and updated boss announcements.
 - 2026-04-08: Rolled live Cryo back from the experimental path/tree direction to the simpler level-based weapon model.
-

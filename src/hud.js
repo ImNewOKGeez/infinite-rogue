@@ -1,4 +1,4 @@
-import { CHARACTERS, getOwnedWeaponIds, getWeaponLevel } from './player.js';
+import { CHARACTERS, getAscensionTier, getOwnedWeaponIds, getWeaponLevel } from './player.js';
 import { getSave, SYNERGIES, isDiscovered, getRatingTier, RATING_COLORS } from './progression.js';
 import { WDEFS } from './weapons.js';
 import { playUIClick } from './audio.js';
@@ -104,6 +104,7 @@ export function updateHUD(P, gt, WDEFS) {
       const w = WDEFS[wids[i]];
       const wid = wids[i];
       const ascended = !!P.ascensions?.[wid];
+      const ascensionTier = ascended ? getAscensionTier(P, wid) : 0;
       const weaponLevel = getWeaponLevel(P, wid);
       const isPulseOverload = wids[i] === 'pulse' && P.ascensions?.pulse === 'overload_round';
       const overloadCounter = isPulseOverload ? Math.max(0, Math.min(2, P._pulseOverloadCounter || 0)) : 0;
@@ -140,7 +141,7 @@ export function updateHUD(P, gt, WDEFS) {
       el.innerHTML = `
         <div class="wi" style="color:${w.col}">${w.icon}</div>
         <div class="wn" style="color:${w.col}">${w.name}</div>
-        ${ascended ? '<div class="wasc">ASC</div>' : `<div class="wdots">${dots}</div>`}
+        ${ascended ? `<div class="wasc">A${ascensionTier || 1}</div>` : `<div class="wdots">${dots}</div>`}
         ${overloadDots}
         ${lanceDots}
       `;

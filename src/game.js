@@ -1,9 +1,9 @@
 import { initHUD, updateHUD, showOverlay, hideOverlay, setBossBar, showDiscoveryOverlay, showRecordsScreen, showAscensionDraft } from './hud.js';
 import { initInput, initJoystick, jDir } from './input.js';
-import { CHARACTERS, addWeapon, getAscension, getOwnedWeaponIds, getWeaponLevel, hasAscension, mkPlayer, mkWeaponState } from './player.js';
+import { CHARACTERS, addWeapon, getAscension, getAscensionTier, getOwnedWeaponIds, getWeaponLevel, hasAscension, mkPlayer, mkWeaponState } from './player.js';
 import { enemies, resetEnemies, spawnEnemy, pruneEnemies, dist2, nearest, setExtraTarget, clearExtraTarget, tickEnemyStatus, updateEnemyFreezeState, applyStun, applySlow, applyKnockback } from './enemies.js';
-import { EMP_SCALING, MOLOTOV_TIERS, WDEFS, bullets, resetBullets, resetPulseClusters, handleCryoImpact, updateCryoFields, getPulseHitDamage, triggerPulseExplosion, spawnBullet, applyFreezeMeter, spawnPulseClusters } from './weapons.js';
-import { PASSIVES, buildPool, applyUpgrade, applyAscension } from './upgrades.js';
+import { EMP_SCALING, MOLOTOV_TIERS, WDEFS, bullets, resetBullets, resetPulseClusters, handleCryoImpact, updateCryoFields, getPulseHitDamage, triggerPulseExplosion, spawnBullet, applyFreezeMeter, spawnPulseClusters, getAscensionTierData } from './weapons.js';
+import { PASSIVES, buildPool, applyUpgrade, applyAscension, applyAscensionTier } from './upgrades.js';
 import { particles, resetParticles, updateParticles, addRing, addBurst, addDot, addArc, addFrostTrail, addStunAura, drawParticles } from './particles.js';
 import { mkBoss, updateBoss, drawBoss, hitBoss, BOSS_SPAWN_TIME, BOSS_RESPAWN_DELAY } from './boss.js';
 import { SYNERGIES, getSave, recordDiscovery, recordRun, getRatingTier, RATING_COLORS } from './progression.js';
@@ -28,7 +28,7 @@ import { hexToRgba, brightenHexColor, traceEnemyShape } from './renderUtils.js';
 import {
   initAudio, resumeAudio,
   playEMPSound,
-  playCryoFire, playCryoStormSound, playGlacialLanceSound, playPulseFire, playCascadeSound, playTriplePulseSound, playArcSound,
+  playCryoFire, playPermafrostFire, playCryoStormSound, playGlacialLanceSound, playPulseFire, playCascadeSound, playTriplePulseSound, playArcSound,
   playArcBladeSound,
   playMolotovThrowSound, playMolotovLandSound,
   playBarrierAbsorbSound,
@@ -111,6 +111,9 @@ export class Game {
     this._cryoStormSoundPlayedThisFrame = false;
     this._barrierRipple = null;
     this.menuBg = null;
+    this._overlayToken = 0;
+    this._overlayFadeTimeout = null;
+    this._overlayHideTimeout = null;
   }
 
   start() {
@@ -160,6 +163,46 @@ export class Game {
       this.unpause();
       this.endGame();
     });
+  }
+
+  _clearOverlayTimers() {
+    if (this._overlayFadeTimeout) {
+      clearTimeout(this._overlayFadeTimeout);
+      this._overlayFadeTimeout = null;
+    }
+    if (this._overlayHideTimeout) {
+      clearTimeout(this._overlayHideTimeout);
+      this._overlayHideTimeout = null;
+    }
+  }
+
+  _resetOverlayStyles() {
+    const overlay = document.getElementById('overlay');
+    if (!overlay) return null;
+    overlay.style.opacity = '';
+    overlay.style.transition = '';
+    overlay.style.animation = '';
+    return overlay;
+  }
+
+  _prepareOverlayShow() {
+    this._overlayToken++;
+    this._clearOverlayTimers();
+    this._resetOverlayStyles();
+    return this._overlayToken;
+  }
+
+  _showOverlay(html, className = '') {
+    this._prepareOverlayShow();
+    showOverlay(html, className);
+    this._resetOverlayStyles();
+  }
+
+  _hideOverlayNow() {
+    this._overlayToken++;
+    this._clearOverlayTimers();
+    this._resetOverlayStyles();
+    hideOverlay();
   }
 
   togglePause() {
@@ -295,7 +338,7 @@ export class Game {
     this.setPlaytestToggleVisible(this.playtestMode);
     clearExtraTarget();
     setBossBar(null);
-    hideOverlay();
+    this._hideOverlayNow();
     this.unpause();
     document.getElementById('pause-btn')?.style.setProperty('display', 'block');
     this.updateCamera();
@@ -323,11 +366,12 @@ export class Game {
     if (!synergy) return;
     this.discoveryPauseActive = true;
     this.paused = true;
+    this._prepareOverlayShow();
     showDiscoveryOverlay(synergy, () => this.resumeAfterDiscovery());
   }
 
   resumeAfterDiscovery() {
-    hideOverlay();
+    this._hideOverlayNow();
     this.discoveryPauseActive = false;
     if (this.discoveryPauseQueue.length) {
       this._showNextDiscoveryPause();
@@ -631,8 +675,9 @@ export class Game {
 
   handleNovaDroneKill(x, y, killedEnemy, options = {}) {
     if (!killedEnemy) return;
-    const blastR = 110;
-    const blastDmg = (killedEnemy.maxHp || 0) * 0.4;
+    const novaDef = getAscensionTierData(this.P, 'swarm')?.definition;
+    const blastR = novaDef?.blastRadius || 110;
+    const blastDmg = (killedEnemy.maxHp || 0) * (novaDef?.blastDamageMult || 0.4);
 
     enemies.forEach(e => {
       if (Math.hypot(e.x - x, e.y - y) < blastR) {
@@ -652,7 +697,7 @@ export class Game {
       this.P._novaDrones.push({
         a: Math.random() * Math.PI * 2,
         ht: 0,
-        life: 8.0,
+        life: novaDef?.novaLife || 8.0,
         isNova: true,
       });
     }
@@ -664,6 +709,7 @@ export class Game {
   }
 
   spawnSplitDrone(P, parentDrone, targetEnemy, orbitR) {
+    const splitDef = getAscensionTierData(P, 'swarm')?.definition;
     const takenTargets = new Set(P._splitDrones.map(sd => sd.target).filter(Boolean));
     takenTargets.add(targetEnemy);
 
@@ -685,10 +731,10 @@ export class Game {
       x: spawnX,
       y: spawnY,
       target: bestTarget,
-      life: 3.0,
-      maxLife: 3.0,
+      life: splitDef?.life || 3.0,
+      maxLife: splitDef?.life || 3.0,
       ht: 0,
-      speed: 220,
+      speed: splitDef?.speed || 220,
     });
 
     addBurst(spawnX, spawnY, '#1DFFD0', 6, 80, 2, 0.3);
@@ -698,7 +744,8 @@ export class Game {
   updateSplitDrones(dt) {
     if (!this.P._splitDrones?.length) return;
     const swarmLvl = getWeaponLevel(this.P, 'swarm');
-    const dmg = this.P.dmg * (7 + swarmLvl * 3.5) * 0.6;
+    const splitDef = getAscensionTierData(this.P, 'swarm')?.definition;
+    const dmg = this.P.dmg * (7 + swarmLvl * 3.5) * (splitDef?.damageMult || 0.6);
     this.P._splitDrones = this.P._splitDrones.filter(sd => {
       sd.life -= dt;
       if (sd.life <= 0) {
@@ -727,7 +774,7 @@ export class Game {
 
         sd.ht = Math.max(0, (sd.ht || 0) - dt);
         if (d < sd.target.r + 4 && sd.ht <= 0) {
-          sd.ht = 0.3;
+          sd.ht = splitDef?.hitCooldown || 0.3;
           this.hitEnemy(sd.target, dmg, '#1DFFD0');
           pruneEnemies();
         }
@@ -831,11 +878,12 @@ export class Game {
     if (!molotovLvl) return;
     const tier = MOLOTOV_TIERS[molotovLvl];
     if (!tier) return;
+    const molotovTierDef = getAscensionTierData(P, 'molotov')?.definition;
 
     P._molotovTimer -= dt;
     if (P._molotovTimer <= 0) {
       const fireRate = P.ascensions.molotov === 'inferno'
-        ? tier.fireRate * 2.0
+        ? tier.fireRate * (molotovTierDef?.fireRateMult || 2.0)
         : tier.fireRate;
       P._molotovTimer = fireRate * (1 / (P.rateBonus || 1));
       this.throwMolotov(tier);
@@ -911,7 +959,8 @@ export class Game {
       : 200;
 
     if (P.ascensions.molotov === 'inferno') {
-      const infernoRadius = tier.radius * 1.8;
+      const infernoDef = getAscensionTierData(P, 'molotov')?.definition;
+      const infernoRadius = tier.radius * (infernoDef?.radiusMult || 1.8);
       const targetX = P.x + Math.cos(angle) * dist;
       const targetY = P.y + Math.sin(angle) * dist;
       P._bottles.push({
@@ -925,9 +974,9 @@ export class Game {
         flightTime: 0.5,
         arcHeight: 100,
         trail: [],
-        dmgMult: tier.dmgMult * 1.5,
+        dmgMult: tier.dmgMult * (infernoDef?.damageMult || 1.5),
         radius: infernoRadius,
-        duration: 8.0,
+        duration: infernoDef?.duration || 8.0,
         isBounce: false,
         isCluster: false,
         bounceCount: 0,
@@ -1010,10 +1059,12 @@ export class Game {
     const landedY = bottle.targetY;
 
     if (bottle.isCluster) {
-      const subAngles = [-0.7, 0, 0.7];
+      const clusterDef = getAscensionTierData(this.P, 'molotov')?.definition;
+      const subBottleCount = clusterDef?.subBottleCount || 3;
       this.createFirePool(landedX, landedY, bottle.radius, bottle.duration, bottle.dmgMult, bottle.isInferno === true);
-      subAngles.forEach(offset => {
-        const subDist = 150 + Math.random() * 60;
+      Array.from({ length: subBottleCount }, (_, index) => index).forEach(index => {
+        const offset = subBottleCount === 1 ? 0 : -0.9 + (1.8 * index) / (subBottleCount - 1);
+        const subDist = (clusterDef?.subDistanceMin || 150) + Math.random() * ((clusterDef?.subDistanceMax || 210) - (clusterDef?.subDistanceMin || 150));
         const baseAngle = Math.atan2(
           landedY - bottle.startY,
           landedX - bottle.startX
@@ -1033,7 +1084,7 @@ export class Game {
           trail: [],
           tier: bottle.tier,
           dmgMult: bottle.dmgMult,
-          radius: bottle.radius * 0.8,
+          radius: bottle.radius * (clusterDef?.subRadiusMult || 0.8),
           duration: bottle.duration,
           isBounce: false,
           isCluster: false,
@@ -1042,11 +1093,12 @@ export class Game {
           justCreated: true,
         });
       });
-    } else if (bottle.isBounce && bottle.bounceCount < 3) {
+    } else if (bottle.isBounce && bottle.bounceCount < (getAscensionTierData(this.P, 'molotov')?.definition?.maxBounces || 3)) {
+      const bounceDef = getAscensionTierData(this.P, 'molotov')?.definition;
       this.createFirePool(
         landedX,
         landedY,
-        85,
+        bounceDef?.bouncePoolRadius || 85,
         bottle.duration,
         bottle.dmgMult,
         false
@@ -1055,7 +1107,7 @@ export class Game {
         landedY - bottle.startY,
         landedX - bottle.startX
       ) + (Math.random() - 0.5) * 0.6;
-      const bounceDist = 140 - bottle.bounceCount * 20;
+      const bounceDist = (bounceDef?.bounceDistanceBase || 140) - bottle.bounceCount * (bounceDef?.bounceDistanceStep || 20);
       P._pendingBottles.push({
         ...bottle,
         startX: landedX,
@@ -1097,8 +1149,10 @@ export class Game {
     const tier = ARC_BLADE_TIERS[getWeaponLevel(P, 'arcblade')];
     if (!tier) return;
     const saw = P._sawBlade;
+    const sawDef = getAscensionTierData(P, 'arcblade')?.definition;
 
-    saw.thetaSpeed = 2.2;
+    saw.thetaSpeed = sawDef?.thetaSpeed || 2.2;
+    saw.orbitR = sawDef?.orbitR || saw.orbitR;
     saw.theta += saw.thetaSpeed * dt;
     saw.rotation += dt * 5;
     saw.x = P.x + Math.cos(saw.theta) * saw.orbitR;
@@ -1106,10 +1160,11 @@ export class Game {
 
     saw.damageTimer -= dt;
     if (saw.damageTimer <= 0) {
-      saw.damageTimer = 0.1;
-      const sawDmg = P.dmg * tier.dmgMult * 15 * 0.25;
+      saw.damageTimer = sawDef?.tickRate || 0.1;
+      const sawRadius = sawDef?.radius || 40;
+      const sawDmg = P.dmg * tier.dmgMult * 15 * (sawDef?.damageMult || 0.25);
       enemies.forEach(e => {
-        if (Math.hypot(e.x - saw.x, e.y - saw.y) < 40 + e.r) {
+        if (Math.hypot(e.x - saw.x, e.y - saw.y) < sawRadius + e.r) {
           this.hitEnemy(e, sawDmg, '#FF2D9B');
         }
       });
@@ -1179,16 +1234,19 @@ export class Game {
           wave.hitEnemies.add(e);
           this.hitEnemy(e, wave.dmg, '#BF77FF');
           if (e.hp <= 0) return;
+          applyStun(e, wave.stunBase);
           this.applyTriplePulseKnockback(e, wave, 1);
         } else if (d <= wave.r2 + e.r) {
           wave.hitEnemies.add(e);
-          this.hitEnemy(e, wave.dmg * 0.6, '#9955DD');
+          this.hitEnemy(e, wave.dmg * (wave.midDamageMult || 0.6), '#9955DD');
           if (e.hp <= 0) return;
+          if (wave.midStunMult > 0) applyStun(e, wave.stunBase * wave.midStunMult);
           this.applyTriplePulseKnockback(e, wave, 2);
         } else if (d <= wave.r3 + e.r) {
           wave.hitEnemies.add(e);
-          this.hitEnemy(e, wave.dmg * 0.3, '#7733BB');
+          this.hitEnemy(e, wave.dmg * (wave.outerDamageMult || 0.3), '#7733BB');
           if (e.hp <= 0) return;
+          if (wave.outerStunMult > 0) applyStun(e, wave.stunBase * wave.outerStunMult);
           this.applyTriplePulseKnockback(e, wave, 3);
         }
       });
@@ -1200,10 +1258,10 @@ export class Game {
           this._doBossHit(wave.dmg, '#BF77FF');
         } else if (d <= wave.r2 + this.boss.r) {
           wave.hitBoss = true;
-          this._doBossHit(wave.dmg * 0.6, '#9955DD');
+          this._doBossHit(wave.dmg * (wave.midDamageMult || 0.6), '#9955DD');
         } else if (d <= wave.r3 + this.boss.r) {
           wave.hitBoss = true;
-          this._doBossHit(wave.dmg * 0.3, '#7733BB');
+          this._doBossHit(wave.dmg * (wave.outerDamageMult || 0.3), '#7733BB');
         }
       }
 
@@ -1262,8 +1320,9 @@ export class Game {
   }
 
   fireCascadeBurst(x, y) {
-    const cascadeR = 100;
-    const cascadeDmg = this.P.dmg * 8;
+    const cascadeDef = getAscensionTierData(this.P, 'emp')?.definition;
+    const cascadeR = cascadeDef?.radius || 100;
+    const cascadeDmg = this.P.dmg * (cascadeDef?.damageMult || 8);
 
     addRing(x, y, cascadeR, '#CC66FF', 2.5, 0.45, {
       shadowColor: '#CC66FF',
@@ -1277,7 +1336,7 @@ export class Game {
       if (d >= cascadeR) return;
       this.hitEnemy(e, cascadeDmg, '#CC66FF');
       if (e.hp <= 0) return;
-      applyStun(e, 1.0);
+      applyStun(e, cascadeDef?.stun || 1.0);
       e._cascaded = true;
     });
     pruneEnemies();
@@ -1286,9 +1345,10 @@ export class Game {
 
   applyArcDischarge(_empBurstDmg) {
     const arcsDrawn = [];
-    const MAX_ARCS_PER_ENEMY = 3;
-    const ARC_RANGE = 250;
-    const MAX_TOTAL_ARCS = 20;
+    const arcDef = getAscensionTierData(this.P, 'emp')?.definition;
+    const MAX_ARCS_PER_ENEMY = arcDef?.maxArcsPerEnemy || 3;
+    const ARC_RANGE = arcDef?.arcRange || 250;
+    const MAX_TOTAL_ARCS = arcDef?.maxTotalArcs || 20;
     const stunnedEnemies = enemies.filter(e => e.hp > 0 && e.stunned);
 
     for (const stunned of stunnedEnemies) {
@@ -1320,7 +1380,7 @@ export class Game {
         if (arcsDrawn.length >= MAX_TOTAL_ARCS) break;
         if (target.hp <= 0) continue;
 
-        const dmg = target.maxHp * 0.12;
+        const dmg = target.maxHp * (arcDef?.damageRatio || 0.12);
         const hit = this.hitEnemy(target, dmg, '#BF77FF');
         if (hit.killed) {
           arcsDrawn.push({
@@ -1331,7 +1391,7 @@ export class Game {
           });
           continue;
         }
-        applyStun(target, 0.5);
+        applyStun(target, arcDef?.stun || 0.5);
         arcsDrawn.push({
           x1: stunned.x,
           y1: stunned.y,
@@ -1357,14 +1417,15 @@ export class Game {
   }
 
   _applyCollapsedRoundPull(x, y) {
-    const pullRadius = 180;
+    const collapseDef = getAscensionTierData(this.P, 'pulse')?.definition;
+    const pullRadius = collapseDef?.pullRadius || 180;
     enemies.forEach(e => {
       const dx = x - e.x;
       const dy = y - e.y;
       if (dx * dx + dy * dy > pullRadius * pullRadius) return;
       e._pullTarget = { x, y };
-      e._pullTimer = 0.3;
-      e._pullSpeed = 400;
+      e._pullTimer = collapseDef?.pullTime || 0.3;
+      e._pullSpeed = collapseDef?.pullSpeed || 400;
     });
     addBurst(x, y, '#FFB627', 12, 110, 2.4, 0.28);
     addRing(x, y, pullRadius, 'rgba(255,182,39,0.4)', 1.8, 0.18);
@@ -1373,13 +1434,14 @@ export class Game {
   handlePulseImpact(bullet, x, y) {
     const ascension = getAscension(this.P, 'pulse');
     if (ascension === 'collapsed_round' && !bullet.meta?.isFragment) {
+      const collapseDef = getAscensionTierData(this.P, 'pulse')?.definition;
       this._applyCollapsedRoundPull(x, y);
       this.queuePulseExplosion({
         x,
         y,
         dmg: bullet.dmg,
         clusterGen: Math.max(0, bullet.meta?.clusterGen ?? 0),
-        delay: 0.3,
+        delay: collapseDef?.pullTime || 0.3,
         sourceMeta: {
           pulseLvl: bullet.meta?.pulseLvl,
           isOverload: !!bullet.meta?.isOverload,
@@ -1406,8 +1468,9 @@ export class Game {
     if (getAscension(this.P, 'pulse') !== 'chain_reaction') return;
     if (cluster.isChainProc) return;
     const chainState = cluster.chainState;
-    if (!chainState || chainState.procs >= 3) return;
-    if (Math.random() >= 0.35) return;
+    const chainDef = getAscensionTierData(this.P, 'pulse')?.definition;
+    if (!chainState || chainState.procs >= (chainDef?.maxProcs || 3)) return;
+    if (Math.random() >= (chainDef?.procChance || 0.35)) return;
     chainState.procs += 1;
     addRing(cluster.x, cluster.y, 80, '#FFB627', 2.8, 0.3);
     addBurst(cluster.x, cluster.y, '#FFD56A', 10, 200, 2.8, 0.22);
@@ -1423,7 +1486,7 @@ export class Game {
         tier: lvl,
         pulseLvl: lvl,
         explosive: true,
-        clusterGen: Math.max(0, lvl - 1),
+        clusterGen: Math.max(0, lvl - 1) + (chainDef?.chainClusterBonus || 0),
         chainProc: true,
         isChainProc: true,
       },
@@ -1460,7 +1523,7 @@ export class Game {
   }
 
   triggerMineExplosion(mine) {
-    const blastR = 120;
+    const blastR = mine.blastRadius || 120;
     enemies.forEach(e => {
       if (Math.hypot(e.x - mine.x, e.y - mine.y) < blastR) {
         this.hitEnemy(e, mine.dmg, mine.col);
@@ -1691,7 +1754,7 @@ export class Game {
     const pool = buildPool(this.P, { allowAscension: false });
     this.currentUpgradePool = pool;
     const cards = pool.map(u => renderUpgradeCardView(u, this.P, `window.__game.pickBossUpgrade('${u.id}')`)).join('');
-    showOverlay(`
+    this._showOverlay(`
       <div style="color:#E24B4A;font-size:9px;letter-spacing:3px;margin-bottom:6px">// SIGNAL TERMINATED //</div>
       <div style="font-size:15px;color:#E24B4A;letter-spacing:2px;margin-bottom:4px">BOSS DEFEATED</div>
       <div style="font-size:9px;color:#444;letter-spacing:2px;margin-bottom:18px">choose your reward</div>
@@ -1701,7 +1764,7 @@ export class Game {
   pickBossUpgrade(id) {
     applyUpgrade(id, this.P);
     this.currentUpgradePool = [];
-    hideOverlay();
+    this._hideOverlayNow();
     this.paused = false;
     if (this.P.xp >= this.P.xpNext) { const v = this.P.xp; this.P.xp = 0; this.addXp(v); }
   }
@@ -1715,12 +1778,13 @@ export class Game {
     otherCards.forEach(card => { card.style.opacity = '0'; });
     setTimeout(() => {
       playUIClose();
+      const token = this._prepareOverlayShow();
       if (overlay) overlay.style.animation = 'fadeOut 0.3s ease forwards';
-      setTimeout(() => {
+      this._overlayHideTimeout = setTimeout(() => {
+        if (token !== this._overlayToken) return;
         applyAscension(this.P, weaponId, ascensionId);
         this.currentUpgradePool = [];
-        hideOverlay();
-        if (overlay) overlay.style.animation = '';
+        this._hideOverlayNow();
         this.paused = false;
         if (this.P.xp >= this.P.xpNext) { const v = this.P.xp; this.P.xp = 0; this.addXp(v); }
       }, 300);
@@ -1768,7 +1832,10 @@ export class Game {
             this.applyArcDischarge(P.dmg * 5.4 * (EMP_SCALING[lvl]?.dmgMult || EMP_SCALING[1].dmgMult));
           }
         }
-        if (wid === 'cryo' && !hasAscension(P, 'cryo', 'frost_field') && !fireResult?.suppressDefaultSound) playCryoFire();
+        if (wid === 'cryo' && !hasAscension(P, 'cryo', 'frost_field') && !fireResult?.suppressDefaultSound) {
+          if (hasAscension(P, 'cryo', 'permafrost')) playPermafrostFire();
+          else playCryoFire();
+        }
         else if (wid === 'pulse') playPulseFire();
         else if (wid === 'emp' && empAscension !== 'triple_pulse') playEMPSound();
       }
@@ -1789,12 +1856,10 @@ export class Game {
     this.bossActive = !!this.boss?.alive;
   }
 
-  _tryCryoStormHit(bullet, enemy) {
-    if (!hasAscension(this.P, 'cryo', 'cryo_storm')) return false;
-    if (bullet.meta?.type !== 'cryo' || bullet.meta?.isCryoShard) return false;
-    if (!enemy.frozen) return false;
+  _triggerCryoStorm(enemy) {
+    if (!hasAscension(this.P, 'cryo', 'cryo_storm')) return;
+    if (!enemy?.frozen) return;
 
-    enemy.frozenTimer = 1.5;
     this._spawnCryoStormShards(enemy.x, enemy.y);
     addBurst(enemy.x, enemy.y, '#B8F7FF', 8, 85, 2.6, 0.24);
     addRing(enemy.x, enemy.y, 24, '#00CFFF', 1.6, 0.18);
@@ -1802,22 +1867,31 @@ export class Game {
       playCryoStormSound();
       this._cryoStormSoundPlayedThisFrame = true;
     }
-    return true;
   }
 
   _spawnCryoStormShards(x, y) {
-    for (let i = 0; i < 8; i++) {
-      const angle = (Math.PI * 2 * i) / 8;
+    const stormDef = getAscensionTierData(this.P, 'cryo')?.definition;
+    const shardCount = stormDef?.shardCount || 8;
+    for (let i = 0; i < shardCount; i++) {
+      const angle = (Math.PI * 2 * i) / shardCount;
       spawnBullet(
         x,
         y,
         Math.cos(angle) * 280,
         Math.sin(angle) * 280,
         4,
-        this.P.dmg * 3,
+        this.P.dmg * (stormDef?.shardDamageMult || 3),
         '#AAFFFF',
         0.8,
-        { type: 'cryo', tier: 5, cryoLevel: 1, pierce: 0, isCryoShard: true, freezeAmount: 0.8, angle }
+        {
+          type: 'cryo',
+          tier: 5,
+          cryoLevel: 1,
+          pierce: stormDef?.shardPierce || 0,
+          isCryoShard: true,
+          freezeAmount: stormDef?.shardFreeze || 0.8,
+          angle
+        }
       );
     }
   }
@@ -1825,7 +1899,11 @@ export class Game {
   _maybeApplyShatter(enemy) {
     if (!hasAscension(this.P, 'cryo', 'shatter')) return false;
     if (!enemy?.frozen || enemy.isBoss) return false;
-    const chance = 0.25 * Math.max(0, Math.min(1, (enemy.frozenTimer || 0) / 1.5));
+    const shatterDef = getAscensionTierData(this.P, 'cryo')?.definition;
+    const freezeRatio = Math.max(0, Math.min(1, (enemy.frozenTimer || 0) / 1.5));
+    const minChance = shatterDef?.minChance || 0;
+    const maxChance = shatterDef?.maxChance || 0.25;
+    const chance = minChance + (maxChance - minChance) * freezeRatio;
     if (Math.random() >= chance) return false;
 
     enemy.hp = 0;
@@ -1855,9 +1933,10 @@ export class Game {
 
   _triggerCryoNova(enemy) {
     if (!hasAscension(this.P, 'cryo', 'cryo_nova')) return;
+    const novaDef = getAscensionTierData(this.P, 'cryo')?.definition;
 
-    const novaRadius = 150;
-    const novaDamage = (enemy.maxHp || 0) * 0.8;
+    const novaRadius = novaDef?.novaRadius || 150;
+    const novaDamage = (enemy.maxHp || 0) * (novaDef?.novaDamageMult || 0.8);
     addRing(enemy.x, enemy.y, 80, '#FFFFFF', 2, 0.25);
     addRing(enemy.x, enemy.y, novaRadius, '#00CFFF', 1.5, 0.3);
     addBurst(enemy.x, enemy.y, '#AAFFFF', 20, 140, 3.5, 0.5);
@@ -1869,16 +1948,16 @@ export class Game {
       const dy = target.y - enemy.y;
       if (dx * dx + dy * dy > novaRadius * novaRadius) return;
       this.hitEnemy(target, novaDamage, '#00CFFF', true);
-      if (target.hp > 0) applyFreezeMeter(target, 2.0);
+      if (target.hp > 0) applyFreezeMeter(target, novaDef?.freezeSeed || 2.0);
     });
     playNovaDetonationSound();
   }
 
-  fireLance(P, target, spreadCount = 1) {
+  fireLance(P, target, spreadCount = 1, lanceDef = null) {
     if (!target) return;
     const a = Math.atan2(target.y - P.y, target.x - P.x);
     const cryoLevel = getWeaponLevel(P, 'cryo');
-    const lanceDmg = P.dmg * (8 + cryoLevel * 3) * 8;
+    const lanceDmg = P.dmg * (8 + cryoLevel * 3) * 8 * (lanceDef?.damageMult || 1);
     const spread = spreadCount > 1 ? [-0.3, -0.15, 0, 0.15, 0.3] : [0];
     spread.slice(0, spreadCount).forEach(offset => {
       bullets.push({
@@ -1896,7 +1975,7 @@ export class Game {
           tier: cryoLevel,
           cryoLevel,
           isLance: true,
-          freeze: true,
+          freeze: lanceDef?.freeze !== false,
           slow: 0,
           pierce: 999,
           angle: a + offset,
@@ -1945,7 +2024,10 @@ export class Game {
       }
 
       // player bullets — check boss first, then enemies
-      if (b.meta?.type === 'cryo') addDot(b.x, b.y, '#00CFFF44', 2.5, 0.15);
+      if (b.meta?.isCryoShard) addDot(b.x, b.y, 'rgba(184,247,255,0.55)', 3.6, 0.2);
+      else if (b.meta?.type === 'cryo' && hasAscension(this.P, 'cryo', 'cryo_storm')) {
+        addDot(b.x, b.y, 'rgba(220,250,255,0.45)', 3.2, 0.18);
+      } else if (b.meta?.type === 'cryo') addDot(b.x, b.y, b.meta?.projectileColor === '#007DCC' ? 'rgba(0,125,204,0.36)' : b.meta?.projectileColor === '#00B4FF' ? 'rgba(0,180,255,0.32)' : '#00CFFF44', 2.8, 0.16);
 
       let alive = true;
 
@@ -1971,10 +2053,9 @@ export class Game {
           if (!this._canBulletHitTarget(b, e.id, dt)) continue;
           const hitByCircle = dist2(b, e) < (b.r + e.r) ** 2;
           if (hitByCircle) {
-            const cryoStormBlocked = this._tryCryoStormHit(b, e);
             let dmg = b.dmg;
             if (b.meta?.type === 'pulse') dmg = getPulseHitDamage(b, dmg);
-            if (!cryoStormBlocked) this.hitEnemy(e, dmg, b.col, false, null, false, true);
+            this.hitEnemy(e, dmg, b.col, false, null, false, true);
             if (b.meta?.type === 'cryo') handleCryoImpact(this, b, e, e.x, e.y, false);
             if (b.meta?.type === 'pulse') {
               this.handlePulseImpact(b, e.x, e.y);
@@ -2121,27 +2202,40 @@ export class Game {
   _updatePickupArray(items, dt, onCollect) {
     const P = this.P;
     return items.filter(item => {
-      const dx = P.x - item.x;
-      const dy = P.y - item.y;
-      const d = Math.sqrt(dx * dx + dy * dy);
-      if (d < P.mag) {
-        if (!item.magnetizing) {
-          item.magnetizing = true;
-          item.magnetizeTime = 0;
-          item.magnetizeDuration = 0.25;
-        }
-        item.x += (P.x - item.x) * 5 * dt;
-        item.y += (P.y - item.y) * 5 * dt;
+      const collectRadius = P.r + item.r;
+      let dx = P.x - item.x;
+      let dy = P.y - item.y;
+      let d = Math.sqrt(dx * dx + dy * dy);
+
+      if (!item.magnetizing && d < P.mag) {
+        item.magnetizing = true;
+        item.magnetizeTime = 0;
+        item.magnetizeDuration = 0.25;
+        item.magnetSpeed = Math.max(220, P.spd * 0.95);
       }
+
       if (item.magnetizing) {
         item.magnetizeTime += dt;
-        if (item.magnetizeTime >= item.magnetizeDuration) {
-          if (d < P.r + item.r) {
-            onCollect(item);
-            return false;
-          }
+        item.magnetSpeed = Math.min((item.magnetSpeed || 220) + 1200 * dt, 1400);
+        if (d <= collectRadius) {
+          onCollect(item);
+          return false;
         }
-      } else if (d < P.r + item.r) {
+
+        const step = Math.min(d, item.magnetSpeed * dt);
+        if (d > 0) {
+          item.x += (dx / d) * step;
+          item.y += (dy / d) * step;
+        }
+
+        dx = P.x - item.x;
+        dy = P.y - item.y;
+        d = Math.sqrt(dx * dx + dy * dy);
+        if (d <= collectRadius) {
+          onCollect(item);
+          return false;
+        }
+      } else if (d <= collectRadius) {
         onCollect(item);
         return false;
       }
@@ -2233,6 +2327,7 @@ export class Game {
       this.killCount++;
       this.killsByType[e.type]++;
       const xpVal = (this.P.char === 'hacker' && e.stunned) ? e.xp * 2 : e.xp;
+      if (e.frozen) this._triggerCryoStorm(e);
       if (e.frozen) this._triggerCryoNova(e);
       e.permafrost = false;
       this._dropEnemyPickups(e, xpVal);
@@ -2380,7 +2475,7 @@ export class Game {
     }
     const loadoutSummary = `<div style="font-size:10px;color:#aaa;letter-spacing:2px;margin-bottom:16px">CURRENT: ${loadoutItems.join(' · ')}</div>`;
 
-    showOverlay(`
+    this._showOverlay(`
       <div style="color:#444;font-size:9px;letter-spacing:3px;margin-bottom:6px">// SYSTEM UPGRADE //</div>
       <div style="font-size:15px;color:#BF77FF;letter-spacing:2px;margin-bottom:4px">LEVEL ${this.P.level} — CHOOSE ONE</div>
       <div style="font-size:9px;color:#444;letter-spacing:2px;margin-bottom:18px">weapon + passive choices every level</div>
@@ -2404,6 +2499,7 @@ export class Game {
       if (ascensionOptions.length) {
         this._screenFlash = { col: '#FFFFFF', alpha: 0.6, life: 0.3 };
         setTimeout(() => {
+          this._prepareOverlayShow();
           showAscensionDraft(wid, ascensionOptions, (ascensionId, pickedAscensionCard) => {
             this.pickAscension(wid, ascensionId, pickedAscensionCard);
           });
@@ -2418,15 +2514,17 @@ export class Game {
     this.unpause();
     if (this.P.xp >= this.P.xpNext) { const v = this.P.xp; this.P.xp = 0; this.addXp(v); }
 
-    setTimeout(() => {
+    const token = this._overlayToken;
+    this._clearOverlayTimers();
+    this._overlayFadeTimeout = setTimeout(() => {
+      if (token !== this._overlayToken) return;
       const overlay = document.getElementById('overlay');
       if (overlay) {
         overlay.style.opacity = '0';
         overlay.style.transition = 'opacity 0.15s ease';
-        setTimeout(() => {
-          hideOverlay();
-          overlay.style.opacity = '';
-          overlay.style.transition = '';
+        this._overlayHideTimeout = setTimeout(() => {
+          if (token !== this._overlayToken) return;
+          this._hideOverlayNow();
         }, 150);
       }
     }, 120);
@@ -2498,7 +2596,7 @@ export class Game {
         </div>
       </div>
     `;
-    showOverlay(youDiedHTML, 'death-screen you-died-screen');
+    this._showOverlay(youDiedHTML, 'death-screen you-died-screen');
   }
 
   showFullDeathStats() {
@@ -2512,11 +2610,12 @@ export class Game {
         const weapon = WDEFS[wid];
         const lvl = getWeaponLevel(this.P, wid);
         const asc = this.P.ascensions?.[wid];
+        const ascTier = asc ? getAscensionTier(this.P, wid) : 0;
         const dots = '●'.repeat(lvl) + '○'.repeat(5 - lvl);
         allWeaponSlots.push(`<div class="death-weapon-row">
           <span style="color:${weapon.col}">${weapon.icon} ${weapon.name}</span>
           <span class="death-weapon-dots" style="color:${weapon.col}">${dots}</span>
-          ${asc ? `<span class="death-asc-tag">ASC: ${asc.toUpperCase().replace(/_/g, ' ')}</span>` : ''}
+          ${asc ? `<span class="death-asc-tag">ASC T${ascTier}: ${asc.toUpperCase().replace(/_/g, ' ')}</span>` : ''}
         </div>`);
       } else {
         allWeaponSlots.push(`<div class="death-weapon-row" style="opacity:0.5">
@@ -2593,7 +2692,7 @@ export class Game {
         </div>
       </div>
     `;
-    showOverlay(deathHTML, 'death-screen');
+    this._showOverlay(deathHTML, 'death-screen');
   }
 
   showMainMenu() {
@@ -2603,7 +2702,7 @@ export class Game {
     document.getElementById('pause-btn')?.style.setProperty('display', 'none');
     stopBossMusic();
     this.menuBg?.start();
-    showOverlay(`
+    this._showOverlay(`
       <div class="menu-shell">
         <div id="menu-splash">
           <div id="menu-title-wrap">
@@ -2632,6 +2731,7 @@ export class Game {
   }
 
   openRecords() {
+    this._prepareOverlayShow();
     showRecordsScreen(() => this.showMainMenu());
   }
 
@@ -2739,7 +2839,7 @@ export class Game {
     const transition = document.getElementById('screen-transition');
     transition?.classList.add('fade-in');
     setTimeout(() => {
-      hideOverlay();
+      this._hideOverlayNow();
       this.newRun(this.getSelectedCharacter());
       setTimeout(() => {
         transition?.classList.remove('fade-in');
@@ -2760,7 +2860,7 @@ export class Game {
 
   returnToMenu() {
     this.running = false;
-    hideOverlay();
+    this._hideOverlayNow();
     this.showMainMenu();
   }
 
@@ -2804,7 +2904,7 @@ export class Game {
     this.playtestBuild = sanitizePlaytestBuildView(this.playtestBuild, char);
     this.syncPlaytestLabState();
     if (this.running) this.paused = true;
-    showOverlay(renderPlaytestLabView(this.playtestBuild, char, this.running, this.getPlaytestWorldDebug(), this.playtestLabState), 'playtest-screen');
+    this._showOverlay(renderPlaytestLabView(this.playtestBuild, char, this.running, this.getPlaytestWorldDebug(), this.playtestLabState), 'playtest-screen');
     this.initPlaytestLabControls();
   }
 
@@ -2829,7 +2929,7 @@ export class Game {
   }
 
   closePlaytestLab() {
-    hideOverlay();
+    this._hideOverlayNow();
     if (this.running) this.paused = false;
     else this.showMainMenu();
   }
@@ -2855,7 +2955,10 @@ export class Game {
     const min = 0;
     const current = this.playtestBuild.weapons[wid] || 0;
     this.playtestBuild.weapons[wid] = cl(Math.round(current + delta), min, 5);
-    if (this.playtestBuild.weapons[wid] < 5) this.playtestBuild.ascensions[wid] = null;
+    if (this.playtestBuild.weapons[wid] < 5) {
+      this.playtestBuild.ascensions[wid] = null;
+      this.playtestBuild.ascensionTiers[wid] = 0;
+    }
     if (this.running && this.playtestMode) this._applyPlaytestBuildToPlayer();
     this.openPlaytestLab();
   }
@@ -2874,6 +2977,17 @@ export class Game {
     this.playtestBuild = sanitizePlaytestBuildView(this.playtestBuild, char);
     if ((this.playtestBuild.weapons[wid] || 0) < 5) return;
     this.playtestBuild.ascensions[wid] = ascensionId;
+    this.playtestBuild.ascensionTiers[wid] = ascensionId ? 1 : 0;
+    if (this.running && this.playtestMode) this._applyPlaytestBuildToPlayer();
+    this.openPlaytestLab();
+  }
+
+  playtestSetAscensionTier(wid, delta) {
+    const char = this.getSelectedCharacter();
+    this.playtestBuild = sanitizePlaytestBuildView(this.playtestBuild, char);
+    if (!this.playtestBuild.ascensions?.[wid]) return;
+    const current = this.playtestBuild.ascensionTiers?.[wid] || 1;
+    this.playtestBuild.ascensionTiers[wid] = cl(current + delta, 1, 5);
     if (this.running && this.playtestMode) this._applyPlaytestBuildToPlayer();
     this.openPlaytestLab();
   }
@@ -2904,6 +3018,7 @@ export class Game {
       if (!ascensionId) return;
       if ((this.playtestBuild.weapons?.[wid] || 0) < 5) return;
       applyAscension(next, wid, ascensionId);
+      applyAscensionTier(next, wid, this.playtestBuild.ascensionTiers?.[wid] || 1);
     });
 
     next.hp = next.maxHp;
@@ -3040,11 +3155,15 @@ export class Game {
       weapons: {},
       passives: { ...state.passives },
       ascensions: { ...(this.playtestBuild?.ascensions || {}) },
+      ascensionTiers: { ...(this.playtestBuild?.ascensionTiers || {}) },
     };
 
     Object.keys(LAB_WEAPON_INPUT_CONFIG).forEach(wid => {
       nextBuild.weapons[wid] = allowedWeaponIds.has(wid) ? state.weapons[wid] : 0;
-      if (nextBuild.weapons[wid] < 5) nextBuild.ascensions[wid] = null;
+      if (nextBuild.weapons[wid] < 5) {
+        nextBuild.ascensions[wid] = null;
+        nextBuild.ascensionTiers[wid] = 0;
+      }
     });
 
     this.playtestBuild = sanitizePlaytestBuildView(nextBuild, char);
@@ -3232,7 +3351,7 @@ export class Game {
       let scale = 1;
       let alpha = 1;
       if (g.magnetizing) {
-        const progress = g.magnetizeTime / g.magnetizeDuration;
+        const progress = Math.min(1, g.magnetizeTime / Math.max(g.magnetizeDuration || 0.25, 0.001));
         scale = 1.0 - (progress * 0.7);
         alpha = 1.0 - progress;
       }
@@ -3369,6 +3488,7 @@ export class Game {
     const { ctx } = this;
     const saw = this.P._sawBlade;
     if (!saw) return;
+    const sawRadius = getAscensionTierData(this.P, 'arcblade')?.definition?.radius || 40;
     ctx.save();
     ctx.translate(saw.x, saw.y);
     ctx.rotate(saw.rotation);
@@ -3403,14 +3523,14 @@ export class Game {
     ctx.shadowBlur = 20;
     ctx.fillStyle = '#FF2D9B44';
     ctx.beginPath();
-    ctx.arc(0, 0, 40, 0, Math.PI * 2);
+    ctx.arc(0, 0, sawRadius, 0, Math.PI * 2);
     ctx.fill();
 
     ctx.strokeStyle = '#FF2D9B66';
     ctx.lineWidth = 1;
     ctx.shadowBlur = 0;
     ctx.beginPath();
-    ctx.arc(0, 0, 40, 0, Math.PI * 2);
+    ctx.arc(0, 0, sawRadius, 0, Math.PI * 2);
     ctx.stroke();
     ctx.restore();
   }
@@ -3748,18 +3868,88 @@ export class Game {
       if (b.meta?.isCryoShard) {
         const angle = b.meta.angle || Math.atan2(b.vy, b.vx);
         ctx.save();
+        ctx.translate(b.x, b.y);
+        ctx.rotate(angle);
+        ctx.shadowColor = '#E8FCFF';
+        ctx.shadowBlur = 16;
+        ctx.fillStyle = '#DFFDFF';
+        ctx.beginPath();
+        ctx.moveTo(7, 0);
+        ctx.lineTo(3, 4);
+        ctx.lineTo(-1, 5);
+        ctx.lineTo(-5, 2);
+        ctx.lineTo(-6, -2);
+        ctx.lineTo(-1, -5);
+        ctx.lineTo(3, -4);
+        ctx.closePath();
+        ctx.fill();
         ctx.shadowColor = '#00CFFF';
-        ctx.shadowBlur = 8;
-        ctx.strokeStyle = '#AAFFFF';
-        ctx.lineWidth = Math.max(2, b.r * 0.5);
+        ctx.shadowBlur = 22;
+        ctx.fillStyle = '#7FEFFF';
         ctx.beginPath();
-        ctx.moveTo(b.x - Math.cos(angle) * (b.r + 3), b.y - Math.sin(angle) * (b.r + 3));
-        ctx.lineTo(b.x + Math.cos(angle) * b.r, b.y + Math.sin(angle) * b.r);
+        ctx.moveTo(4.5, 0);
+        ctx.lineTo(1.5, 2.6);
+        ctx.lineTo(-1.5, 2.8);
+        ctx.lineTo(-4, 0);
+        ctx.lineTo(-1.5, -2.8);
+        ctx.lineTo(1.5, -2.6);
+        ctx.closePath();
+        ctx.fill();
+        ctx.shadowBlur = 0;
+        ctx.strokeStyle = 'rgba(255,255,255,0.95)';
+        ctx.lineWidth = 1.25;
+        ctx.beginPath();
+        ctx.moveTo(-6, 0);
+        ctx.lineTo(6, 0);
+        ctx.moveTo(-2.5, -4.5);
+        ctx.lineTo(2.5, 4.5);
+        ctx.moveTo(-2.5, 4.5);
+        ctx.lineTo(2.5, -4.5);
         ctx.stroke();
-        ctx.strokeStyle = 'rgba(255,255,255,0.9)';
+        ctx.restore();
+        return;
+      }
+
+      if (b.meta?.type === 'cryo' && hasAscension(this.P, 'cryo', 'cryo_storm')) {
+        const angle = Math.atan2(b.vy, b.vx);
+        ctx.save();
+        ctx.translate(b.x, b.y);
+        ctx.rotate(angle);
+        ctx.shadowColor = '#F2FEFF';
+        ctx.shadowBlur = 14;
+        ctx.fillStyle = '#E8FCFF';
         ctx.beginPath();
-        ctx.moveTo(b.x - Math.cos(angle + Math.PI / 2) * (b.r - 1), b.y - Math.sin(angle + Math.PI / 2) * (b.r - 1));
-        ctx.lineTo(b.x + Math.cos(angle + Math.PI / 2) * (b.r - 1), b.y + Math.sin(angle + Math.PI / 2) * (b.r - 1));
+        ctx.moveTo(8, 0);
+        ctx.lineTo(3, 4.5);
+        ctx.lineTo(-2, 5.5);
+        ctx.lineTo(-6, 1.8);
+        ctx.lineTo(-6, -1.8);
+        ctx.lineTo(-2, -5.5);
+        ctx.lineTo(3, -4.5);
+        ctx.closePath();
+        ctx.fill();
+        ctx.shadowColor = '#00CFFF';
+        ctx.shadowBlur = 18;
+        ctx.fillStyle = '#8BF4FF';
+        ctx.beginPath();
+        ctx.moveTo(5, 0);
+        ctx.lineTo(1.5, 2.6);
+        ctx.lineTo(-2.2, 2.8);
+        ctx.lineTo(-4.3, 0);
+        ctx.lineTo(-2.2, -2.8);
+        ctx.lineTo(1.5, -2.6);
+        ctx.closePath();
+        ctx.fill();
+        ctx.shadowBlur = 0;
+        ctx.strokeStyle = 'rgba(255,255,255,0.95)';
+        ctx.lineWidth = 1.1;
+        ctx.beginPath();
+        ctx.moveTo(-5, 0);
+        ctx.lineTo(5.5, 0);
+        ctx.moveTo(-1.8, -3.8);
+        ctx.lineTo(1.8, 3.8);
+        ctx.moveTo(-1.8, 3.8);
+        ctx.lineTo(1.8, -3.8);
         ctx.stroke();
         ctx.restore();
         return;

@@ -1,6 +1,6 @@
 import { enemies, nearest, dist2, pruneEnemies, getExtraTarget, applySlow, ensureFreezeState, applyStun, getEffectiveFreezeThreshold } from './enemies.js';
 import { addRing, addBurst, addDot } from './particles.js';
-import { getAscension, getWeaponLevel } from './player.js';
+import { getAscension, getAscensionTier, getWeaponLevel } from './player.js';
 
 export const bullets = [];
 export const pulseClusters = [];
@@ -10,7 +10,7 @@ export const ASCENSIONS = {
     {
       id: 'cryo_storm',
       name: 'CRYO STORM',
-      description: 'Hitting a frozen enemy resets their freeze timer and releases freeze-building shards in all directions. No damage on frozen hits.',
+      description: 'Frozen enemies that die release freeze-building shards in all directions.',
     },
     {
       id: 'permafrost',
@@ -125,6 +125,293 @@ export const ASCENSIONS = {
   ]
 };
 
+export const ASCENSION_TIER_DEFS = {
+  cryo_storm: {
+    weaponId: 'cryo',
+    tiers: {
+      1: { shardCount: 3, shardDamageMult: 3.0, shardFreeze: 0.8, shardPierce: 0, description: 'Frozen kills release 3 shards in an even circle.' },
+      2: { shardCount: 5, shardDamageMult: 3.0, shardFreeze: 0.8, shardPierce: 0, description: 'Frozen kills release 5 shards.' },
+      3: { shardCount: 7, shardDamageMult: 3.0, shardFreeze: 0.8, shardPierce: 0, description: 'Frozen kills release 7 shards.' },
+      4: { shardCount: 9, shardDamageMult: 3.0, shardFreeze: 0.8, shardPierce: 0, description: 'Frozen kills release 9 shards.' },
+      5: { shardCount: 11, shardDamageMult: 3.0, shardFreeze: 0.8, shardPierce: 0, description: 'Frozen kills release 11 shards.' },
+    },
+  },
+  permafrost: {
+    weaponId: 'cryo',
+    tiers: {
+      1: {
+        projectileSpeed: 430,
+        projectilePierce: 2,
+        projectileColor: '#007DCC',
+        projectileRadius: 5,
+        projectileCount: 1,
+        fireRateMult: 0.78,
+        spreadRadius: 120,
+        spreadInterval: 0,
+        spreadFreezePct: 0,
+        description: 'Cryo condenses into one large snowball shot that instantly freezes on hit. Frozen enemies never thaw.',
+      },
+      2: {
+        projectileSpeed: 430,
+        projectilePierce: 4,
+        projectileColor: '#007DCC',
+        projectileRadius: 5,
+        projectileCount: 1,
+        fireRateMult: 0.78,
+        spreadRadius: 120,
+        spreadInterval: 1.2,
+        spreadFreezePct: 0.35,
+        description: 'The heavy single shot remains. Frozen enemies slowly spread freeze to nearby enemies. Cryo pierce increases to 2.',
+      },
+      3: {
+        projectileSpeed: 430,
+        projectilePierce: 6,
+        projectileColor: '#007DCC',
+        projectileRadius: 5,
+        projectileCount: 3,
+        spreadStepMult: 1.55,
+        fireRateMult: 0.78,
+        spreadRadius: 120,
+        spreadInterval: 0.9,
+        spreadFreezePct: 0.35,
+        description: 'Permafrost now fires 3 heavy shots. Freeze spread rate increases and Cryo pierce increases to 3.',
+      },
+      4: {
+        projectileSpeed: 430,
+        projectilePierce: 8,
+        projectileColor: '#007DCC',
+        projectileRadius: 5,
+        projectileCount: 3,
+        fireRateMult: 0.78,
+        spreadRadius: 120,
+        spreadInterval: 0.65,
+        spreadFreezePct: 0.35,
+        description: 'The 3-shot pattern remains. Freeze spread rate increases again and Cryo pierce increases to 4.',
+      },
+      5: {
+        projectileSpeed: 430,
+        projectilePierce: 10,
+        projectileColor: '#007DCC',
+        projectileRadius: 5,
+        projectileCount: 5,
+        spreadStepMult: 1.55,
+        fireRateMult: 0.78,
+        spreadRadius: 120,
+        spreadInterval: 0.45,
+        spreadFreezePct: 0.35,
+        description: 'Permafrost now fires 5 heavy shots. Freeze spread reaches its fastest rate and Cryo pierce increases to 5.',
+      },
+    },
+  },
+  cryo_nova: {
+    weaponId: 'cryo',
+    tiers: {
+      1: { novaRadius: 150, novaDamageMult: 0.8, freezeSeed: 2.0, description: 'Frozen kills detonate for 80% max-HP damage in a 150px nova.' },
+      2: { novaRadius: 170, novaDamageMult: 0.85, freezeSeed: 2.1, description: 'Nova radius and damage increase slightly.' },
+      3: { novaRadius: 190, novaDamageMult: 0.9, freezeSeed: 2.3, description: 'Nova reaches farther and seeds more freeze.' },
+      4: { novaRadius: 210, novaDamageMult: 0.95, freezeSeed: 2.5, description: 'Nova becomes a larger, harder-hitting ice blast.' },
+      5: { novaRadius: 230, novaDamageMult: 1.0, freezeSeed: 2.8, description: 'Nova peaks at full max-HP damage with the largest freeze spread.' },
+    },
+  },
+  glacial_lance: {
+    weaponId: 'cryo',
+    tiers: {
+      1: { procEvery: 3, beamCount: 1, damageMult: 1.0, freeze: true, description: 'Every third Cryo fire becomes a piercing Glacial Lance.' },
+      2: { procEvery: 3, beamCount: 1, damageMult: 1.2, freeze: true, description: 'Glacial Lance damage increases by 20%.' },
+      3: { procEvery: 3, beamCount: 3, damageMult: 1.2, freeze: true, description: 'Glacial Lance releases a 3-beam spread.' },
+      4: { procEvery: 2, beamCount: 3, damageMult: 1.35, freeze: true, description: 'The lance now triggers every second Cryo fire.' },
+      5: { procEvery: 2, beamCount: 5, damageMult: 1.5, freeze: true, description: 'Every second Cryo fire releases the full 5-beam Glacial Lance spread.' },
+    },
+  },
+  frost_field: {
+    weaponId: 'cryo',
+    tiers: {
+      1: { radius: 150, dpsMult: 5, freezeTime: 1.5, description: 'Creates a 150px frost aura that slows, freezes, and chips nearby enemies.' },
+      2: { radius: 170, dpsMult: 6, freezeTime: 1.35, description: 'Frost Field expands and freezes a little faster.' },
+      3: { radius: 190, dpsMult: 7, freezeTime: 1.2, description: 'Frost Field grows again and burns colder.' },
+      4: { radius: 210, dpsMult: 8, freezeTime: 1.0, description: 'Frost Field becomes a larger fast-freezing aura.' },
+      5: { radius: 230, dpsMult: 9, freezeTime: 0.85, description: 'Frost Field reaches maximum size and fastest freeze cadence.' },
+    },
+  },
+  shatter: {
+    weaponId: 'cryo',
+    tiers: {
+      1: { maxChance: 0.25, minChance: 0.0, description: 'Frozen enemies can instantly shatter on hit.' },
+      2: { maxChance: 0.3, minChance: 0.0, description: 'Raises the maximum shatter chance to 30%.' },
+      3: { maxChance: 0.35, minChance: 0.05, description: 'Raises the maximum shatter chance and leaves a small late-window chance.' },
+      4: { maxChance: 0.4, minChance: 0.1, description: 'Shatter remains dangerous for longer into the freeze.' },
+      5: { maxChance: 0.45, minChance: 0.15, description: 'Shatter peaks at 45% and never fully decays while the target stays frozen.' },
+    },
+  },
+  chain_reaction: {
+    weaponId: 'pulse',
+    tiers: {
+      1: { procChance: 0.35, maxProcs: 3, chainClusterBonus: 0, description: 'Cluster explosions have a 35% chance to retrigger a full Pulse impact.' },
+      2: { procChance: 0.45, maxProcs: 3, chainClusterBonus: 0, description: 'Chain Reaction proc chance rises to 45%.' },
+      3: { procChance: 0.55, maxProcs: 4, chainClusterBonus: 0, description: 'Chain Reaction can proc one extra time per chain.' },
+      4: { procChance: 0.65, maxProcs: 4, chainClusterBonus: 1, description: 'Retriggered impacts generate one extra cluster layer.' },
+      5: { procChance: 0.75, maxProcs: 5, chainClusterBonus: 1, description: 'Chain Reaction becomes highly reliable and can sustain longer chains.' },
+    },
+  },
+  collapsed_round: {
+    weaponId: 'pulse',
+    tiers: {
+      1: { pullRadius: 180, pullTime: 0.3, pullSpeed: 400, description: 'Pulse impacts pull enemies inward before exploding.' },
+      2: { pullRadius: 200, pullTime: 0.32, pullSpeed: 450, description: 'Collapsed Round pulls from slightly farther out.' },
+      3: { pullRadius: 220, pullTime: 0.34, pullSpeed: 520, description: 'Collapsed Round pulls harder and longer.' },
+      4: { pullRadius: 240, pullTime: 0.36, pullSpeed: 590, description: 'Collapsed Round becomes a stronger vacuum detonation.' },
+      5: { pullRadius: 260, pullTime: 0.4, pullSpeed: 660, description: 'Collapsed Round reaches maximum pull radius and strength.' },
+    },
+  },
+  overload_round: {
+    weaponId: 'pulse',
+    tiers: {
+      1: { procEvery: 3, damageMult: 5, radiusScale: 2.0, description: 'Every third Pulse shot becomes an Overload Round.' },
+      2: { procEvery: 3, damageMult: 6, radiusScale: 2.2, description: 'Overload Round damage and blast radius increase.' },
+      3: { procEvery: 3, damageMult: 7, radiusScale: 2.4, description: 'Overload Round grows even more explosive.' },
+      4: { procEvery: 2, damageMult: 7, radiusScale: 2.6, description: 'Overload Round now triggers every second Pulse shot.' },
+      5: { procEvery: 2, damageMult: 8, radiusScale: 3.0, description: 'Every second Pulse shot becomes a maximum-power Overload Round.' },
+    },
+  },
+  proximity_mine: {
+    weaponId: 'pulse',
+    tiers: {
+      1: { maxMines: 6, triggerRadius: 18, blastRadius: 120, damageMult: 3.0, description: 'Pulse shells become proximity mines with up to 6 active.' },
+      2: { maxMines: 8, triggerRadius: 20, blastRadius: 135, damageMult: 3.2, description: 'More mines can stay active and their blast grows.' },
+      3: { maxMines: 10, triggerRadius: 22, blastRadius: 150, damageMult: 3.4, description: 'Proximity Mine stores more charges and hits harder.' },
+      4: { maxMines: 12, triggerRadius: 26, blastRadius: 165, damageMult: 3.7, description: 'Mine trigger range and blast radius both increase.' },
+      5: { maxMines: 14, triggerRadius: 30, blastRadius: 180, damageMult: 4.0, description: 'Proximity Mine reaches maximum stockpile and explosion size.' },
+    },
+  },
+  fragmentation: {
+    weaponId: 'pulse',
+    tiers: {
+      1: { fragmentCount: 8, fragmentDamageMult: 0.4, fragmentRadius: 48, description: 'Pulse shells split into 8 explosive fragments.' },
+      2: { fragmentCount: 10, fragmentDamageMult: 0.42, fragmentRadius: 54, description: 'Fragmentation releases more fragments with a larger blast.' },
+      3: { fragmentCount: 12, fragmentDamageMult: 0.44, fragmentRadius: 60, description: 'Fragmentation spreads even more bomblets.' },
+      4: { fragmentCount: 14, fragmentDamageMult: 0.47, fragmentRadius: 66, description: 'Fragmentation becomes denser and more damaging.' },
+      5: { fragmentCount: 16, fragmentDamageMult: 0.5, fragmentRadius: 72, description: 'Fragmentation peaks at 16 fragments and the largest sub-blast.' },
+    },
+  },
+  cascade_pulse: {
+    weaponId: 'emp',
+    tiers: {
+      1: { radius: 100, damageMult: 8, stun: 1.0, description: 'Freshly stunned enemies emit a secondary cascade burst.' },
+      2: { radius: 115, damageMult: 8.8, stun: 1.1, description: 'Cascade Pulse grows in radius and damage.' },
+      3: { radius: 130, damageMult: 9.6, stun: 1.2, description: 'Cascade Pulse expands again with stronger stuns.' },
+      4: { radius: 145, damageMult: 10.4, stun: 1.3, description: 'Cascade Pulse becomes a heavy follow-up wave.' },
+      5: { radius: 160, damageMult: 11.2, stun: 1.4, description: 'Cascade Pulse reaches maximum radius, damage, and stun time.' },
+    },
+  },
+  triple_pulse: {
+    weaponId: 'emp',
+    tiers: {
+      1: { radiusMult: 1.0, midDamageMult: 0.6, outerDamageMult: 0.3, midStunMult: 0.0, outerStunMult: 0.0, description: 'EMP fires three expanding shockwave bands.' },
+      2: { radiusMult: 1.08, midDamageMult: 0.65, outerDamageMult: 0.35, midStunMult: 0.0, outerStunMult: 0.0, description: 'Triple Pulse bands expand farther and hit a little harder.' },
+      3: { radiusMult: 1.16, midDamageMult: 0.7, outerDamageMult: 0.4, midStunMult: 0.35, outerStunMult: 0.0, description: 'The middle ring now applies a brief stun.' },
+      4: { radiusMult: 1.24, midDamageMult: 0.75, outerDamageMult: 0.45, midStunMult: 0.45, outerStunMult: 0.2, description: 'Triple Pulse strengthens all three rings and adds a light outer stun.' },
+      5: { radiusMult: 1.32, midDamageMult: 0.8, outerDamageMult: 0.5, midStunMult: 0.55, outerStunMult: 0.3, description: 'Triple Pulse reaches maximum ring size and strongest outer-band payoff.' },
+    },
+  },
+  arc_discharge: {
+    weaponId: 'emp',
+    tiers: {
+      1: { arcRange: 250, maxArcsPerEnemy: 3, maxTotalArcs: 20, damageRatio: 0.12, stun: 0.5, description: 'Stunned enemies fire damaging arcs into nearby targets.' },
+      2: { arcRange: 280, maxArcsPerEnemy: 3, maxTotalArcs: 24, damageRatio: 0.14, stun: 0.55, description: 'Arc Discharge jumps farther and deals more damage.' },
+      3: { arcRange: 310, maxArcsPerEnemy: 4, maxTotalArcs: 28, damageRatio: 0.16, stun: 0.6, description: 'Arc Discharge can link to more targets per source.' },
+      4: { arcRange: 340, maxArcsPerEnemy: 4, maxTotalArcs: 32, damageRatio: 0.18, stun: 0.7, description: 'Arc Discharge intensifies with stronger damage and stun.' },
+      5: { arcRange: 380, maxArcsPerEnemy: 5, maxTotalArcs: 36, damageRatio: 0.2, stun: 0.8, description: 'Arc Discharge reaches maximum network range and arc density.' },
+    },
+  },
+  nova_swarm: {
+    weaponId: 'swarm',
+    tiers: {
+      1: { blastRadius: 110, blastDamageMult: 0.4, novaLife: 8.0, description: 'Drone kills detonate and spawn temporary nova drones.' },
+      2: { blastRadius: 125, blastDamageMult: 0.45, novaLife: 8.5, description: 'Nova Swarm explosions grow and nova drones last longer.' },
+      3: { blastRadius: 140, blastDamageMult: 0.5, novaLife: 9.0, description: 'Nova Swarm hits harder and sustains more temporary drones.' },
+      4: { blastRadius: 155, blastDamageMult: 0.55, novaLife: 9.5, description: 'Nova Swarm becomes a larger kill explosion.' },
+      5: { blastRadius: 170, blastDamageMult: 0.6, novaLife: 10.0, description: 'Nova Swarm reaches maximum blast size and nova-drone lifespan.' },
+    },
+  },
+  frenzy: {
+    weaponId: 'swarm',
+    tiers: {
+      1: { speedMult: 2.0, damageMult: 2.0, duration: 3.0, cooldown: 3.0, description: 'Drone kills trigger a brief frenzy on that drone.' },
+      2: { speedMult: 2.15, damageMult: 2.15, duration: 3.25, cooldown: 2.8, description: 'Frenzy lasts a little longer and hits harder.' },
+      3: { speedMult: 2.3, damageMult: 2.3, duration: 3.5, cooldown: 2.6, description: 'Frenzy strengthens again and recharges faster.' },
+      4: { speedMult: 2.45, damageMult: 2.45, duration: 3.75, cooldown: 2.4, description: 'Frenzy becomes a stronger sustained chase state.' },
+      5: { speedMult: 2.6, damageMult: 2.6, duration: 4.0, cooldown: 2.2, description: 'Frenzy peaks in duration, damage, and pursuit speed.' },
+    },
+  },
+  split_swarm: {
+    weaponId: 'swarm',
+    tiers: {
+      1: { life: 3.0, speed: 220, damageMult: 0.6, hitCooldown: 0.3, description: 'Drones split on first contact and the clone attacks independently.' },
+      2: { life: 3.5, speed: 240, damageMult: 0.68, hitCooldown: 0.28, description: 'Split drones last longer and move faster.' },
+      3: { life: 4.0, speed: 260, damageMult: 0.76, hitCooldown: 0.26, description: 'Split drones grow more dangerous on contact.' },
+      4: { life: 4.5, speed: 280, damageMult: 0.84, hitCooldown: 0.24, description: 'Split drones stay active longer and cycle hits faster.' },
+      5: { life: 5.0, speed: 300, damageMult: 0.92, hitCooldown: 0.22, description: 'Split Swarm reaches maximum clone lifespan and hit output.' },
+    },
+  },
+  saw_blade: {
+    weaponId: 'arcblade',
+    tiers: {
+      1: { orbitR: 80, thetaSpeed: 2.2, radius: 40, tickRate: 0.1, damageMult: 0.25, description: 'All boomerangs merge into a single orbital saw.' },
+      2: { orbitR: 88, thetaSpeed: 2.35, radius: 44, tickRate: 0.095, damageMult: 0.28, description: 'Saw Blade grows in orbit size and contact damage.' },
+      3: { orbitR: 96, thetaSpeed: 2.5, radius: 48, tickRate: 0.09, damageMult: 0.31, description: 'Saw Blade spins faster and covers more space.' },
+      4: { orbitR: 104, thetaSpeed: 2.7, radius: 52, tickRate: 0.085, damageMult: 0.34, description: 'Saw Blade becomes a larger, faster orbital cutter.' },
+      5: { orbitR: 112, thetaSpeed: 2.9, radius: 56, tickRate: 0.08, damageMult: 0.38, description: 'Saw Blade reaches maximum orbit, size, and damage cadence.' },
+    },
+  },
+  inferno: {
+    weaponId: 'molotov',
+    tiers: {
+      1: { radiusMult: 1.8, duration: 8.0, damageMult: 1.5, fireRateMult: 2.0, description: 'Throws one oversized bottle that leaves a giant Inferno pool.' },
+      2: { radiusMult: 1.95, duration: 8.5, damageMult: 1.6, fireRateMult: 1.95, description: 'Inferno pool grows and burns longer.' },
+      3: { radiusMult: 2.1, duration: 9.0, damageMult: 1.7, fireRateMult: 1.9, description: 'Inferno becomes a larger, hotter burn zone.' },
+      4: { radiusMult: 2.25, duration: 9.5, damageMult: 1.8, fireRateMult: 1.85, description: 'Inferno expands again with more persistent damage.' },
+      5: { radiusMult: 2.4, duration: 10.0, damageMult: 1.9, fireRateMult: 1.8, description: 'Inferno reaches maximum pool size, duration, and heat.' },
+    },
+  },
+  bouncing_cocktail: {
+    weaponId: 'molotov',
+    tiers: {
+      1: { maxBounces: 3, bouncePoolRadius: 85, bounceDistanceBase: 140, bounceDistanceStep: 20, description: 'Bottles bounce three times, leaving smaller pools.' },
+      2: { maxBounces: 4, bouncePoolRadius: 90, bounceDistanceBase: 145, bounceDistanceStep: 18, description: 'Bouncing Cocktail gains an extra hop and slightly larger pools.' },
+      3: { maxBounces: 4, bouncePoolRadius: 95, bounceDistanceBase: 150, bounceDistanceStep: 16, description: 'Bounce pools grow and spread farther.' },
+      4: { maxBounces: 5, bouncePoolRadius: 100, bounceDistanceBase: 155, bounceDistanceStep: 14, description: 'Bouncing Cocktail adds another hop and wider flame patches.' },
+      5: { maxBounces: 5, bouncePoolRadius: 110, bounceDistanceBase: 160, bounceDistanceStep: 12, description: 'Bouncing Cocktail reaches maximum hop count and pool size.' },
+    },
+  },
+  cluster_molotov: {
+    weaponId: 'molotov',
+    tiers: {
+      1: { subBottleCount: 3, subDistanceMin: 150, subDistanceMax: 210, subRadiusMult: 0.8, description: 'Molotovs split into 3 sub-bottles on impact.' },
+      2: { subBottleCount: 4, subDistanceMin: 155, subDistanceMax: 220, subRadiusMult: 0.82, description: 'Cluster Molotov gains one extra sub-bottle.' },
+      3: { subBottleCount: 5, subDistanceMin: 160, subDistanceMax: 230, subRadiusMult: 0.84, description: 'Cluster Molotov releases a denser spread of fire.' },
+      4: { subBottleCount: 6, subDistanceMin: 165, subDistanceMax: 240, subRadiusMult: 0.86, description: 'Cluster Molotov fills the landing zone with more sub-bottles.' },
+      5: { subBottleCount: 7, subDistanceMin: 170, subDistanceMax: 250, subRadiusMult: 0.9, description: 'Cluster Molotov reaches maximum shatter count and pool coverage.' },
+    },
+  },
+};
+
+export function getAscensionTierDefinition(ascensionId, tier = 1) {
+  const def = ASCENSION_TIER_DEFS[ascensionId];
+  if (!def) return null;
+  return def.tiers[Math.max(1, Math.min(5, tier))] || def.tiers[1];
+}
+
+export function getAscensionTierData(p, weaponId) {
+  const ascensionId = getAscension(p, weaponId);
+  if (!ascensionId) return null;
+  const tier = getAscensionTier(p, weaponId);
+  return {
+    ascensionId,
+    tier,
+    definition: getAscensionTierDefinition(ascensionId, tier),
+  };
+}
+
 export function resetBullets() { bullets.length = 0; }
 export function resetPulseClusters() { pulseClusters.length = 0; }
 
@@ -231,6 +518,14 @@ function getCryoFreezeAmount(lvl) {
   return [0, 1.0, 1.5, 2.0, 2.5, 3.0][Math.min(Math.max(lvl, 1), 5)] || 1.0;
 }
 
+function getPermafrostFreezeAmount(target) {
+  const effectiveThreshold = getEffectiveFreezeThreshold(target);
+  const targetRadius = Math.max(10, target?.r || 10);
+  const t = Math.max(0, Math.min(1, (targetRadius - 10) / 22));
+  const freezePct = 0.75 - t * 0.6;
+  return effectiveThreshold * freezePct;
+}
+
 function getCryoDamage(lvl, dmgMult) {
   return dmgMult * (4 + lvl * 1.5);
 }
@@ -283,39 +578,56 @@ export const WDEFS = {
     getRate: p => {
       const lvl = getWeaponLevel(p, 'cryo');
       const base = 1.9 + lvl * 0.35;
-      return base * (p.rateBonus || 1);
+      const rate = base * (p.rateBonus || 1);
+      const ascension = getAscension(p, 'cryo');
+      const ascensionTier = getAscensionTierData(p, 'cryo');
+      if (ascension === 'permafrost') {
+        return rate * (ascensionTier?.definition?.fireRateMult || 1);
+      }
+      return rate;
     },
     fire(p) {
       const t = nearest(p); if (!t) return;
       const a = Math.atan2(t.y - p.y, t.x - p.x);
       const lvl = getWeaponLevel(p, 'cryo');
       const ascension = getAscension(p, 'cryo');
+      const ascensionTier = getAscensionTierData(p, 'cryo');
       if (ascension === 'frost_field') return;
       const dmg = getCryoDamage(lvl, p.dmg);
       if (ascension === 'glacial_lance') {
         p._lanceCounter = (p._lanceCounter || 0) + 1;
-        if (p._lanceCounter >= 3) {
+        const lanceDef = ascensionTier?.definition;
+        const procEvery = lanceDef?.procEvery || 3;
+        if (p._lanceCounter >= procEvery) {
           p._lanceCounter = 0;
-          this.fireLance?.(p, t, lvl === 5 ? 5 : 1);
+          const baseBeamCount = lvl === 5 ? 5 : 1;
+          const beamCount = Math.max(baseBeamCount, lanceDef?.beamCount || baseBeamCount);
+          this.fireLance?.(p, t, beamCount, lanceDef);
           return { suppressDefaultSound: true };
         }
       }
-      const count = getCryoProjectileCount(lvl);
-      const spreadStep = getCryoSpreadStep(lvl);
+      const permafrostDef = ascension === 'permafrost' ? ascensionTier?.definition : null;
+      const count = permafrostDef?.projectileCount || getCryoProjectileCount(lvl);
+      const spreadStep = getCryoSpreadStep(count) * (permafrostDef?.spreadStepMult || 1);
       const startOffset = -spreadStep * (count - 1) * 0.5;
+      const projectileSpeed = permafrostDef?.projectileSpeed || 430;
+      const projectilePierce = permafrostDef?.projectilePierce ?? 1;
+      const projectileColor = permafrostDef?.projectileColor || '#00CFFF';
+      const projectileRadius = permafrostDef?.projectileRadius || 5;
+      const freezeOnHit = ascension === 'permafrost';
 
       for (let i = 0; i < count; i++) {
         const angle = a + startOffset + i * spreadStep;
         mkBullet(
           p.x,
           p.y,
-          Math.cos(angle) * 430,
-          Math.sin(angle) * 430,
-          5,
+          Math.cos(angle) * projectileSpeed,
+          Math.sin(angle) * projectileSpeed,
+          projectileRadius,
           dmg,
-          '#00CFFF',
+          projectileColor,
           2.2,
-          { type: 'cryo', tier: lvl, cryoLevel: lvl, pierce: 1 }
+          { type: 'cryo', tier: lvl, cryoLevel: lvl, pierce: projectilePierce, freeze: freezeOnHit, permafrostFreeze: freezeOnHit, projectileColor }
         );
       }
     },
@@ -341,53 +653,64 @@ export const WDEFS = {
       const lvl = getWeaponLevel(p, 'pulse');
       const dmg = getPulseBaseDamage(p, lvl);
       const ascension = getAscension(p, 'pulse');
+      const ascensionTier = getAscensionTierData(p, 'pulse');
 
       if (ascension === 'proximity_mine') {
+        const mineDef = ascensionTier?.definition;
         p._pulseMines ||= [];
-        if (p._pulseMines.length >= 6) p._pulseMines.shift();
+        const maxMines = mineDef?.maxMines || 6;
+        if (p._pulseMines.length >= maxMines) p._pulseMines.shift();
         p._pulseMines.push({
           x: p.x,
           y: p.y,
-          r: 18,
+          r: mineDef?.triggerRadius || 18,
           armed: false,
           armTimer: 0.5,
           triggered: false,
-          dmg: dmg * 3,
+          dmg: dmg * (mineDef?.damageMult || 3),
           col: '#FFB627',
           life: 30,
+          blastRadius: mineDef?.blastRadius || 120,
         });
         return;
       }
 
       if (ascension === 'fragmentation') {
-        const fragmentCount = 8;
+        const fragDef = ascensionTier?.definition;
+        const fragmentCount = fragDef?.fragmentCount || 8;
         const spread = (50 * Math.PI) / 180;
         const startOffset = -spread * 0.5;
         const step = fragmentCount > 1 ? spread / (fragmentCount - 1) : 0;
         const fragmentClusterGen = Math.max(0, getPulseClusterGeneration(lvl) - 1);
         for (let i = 0; i < fragmentCount; i++) {
           const angle = a + startOffset + i * step;
-          firePulseShell(p, angle, dmg * 0.4, lvl, {
+          firePulseShell(p, angle, dmg * (fragDef?.fragmentDamageMult || 0.4), lvl, {
             radius: 5,
             speed: 340,
             clusterGen: fragmentClusterGen,
             isFragment: true,
+            meta: {
+              fragmentDamageMult: fragDef?.fragmentDamageMult || 0.4,
+              fragmentRadius: fragDef?.fragmentRadius || 48,
+            },
           });
         }
         return;
       }
 
       if (ascension === 'overload_round') {
+        const overloadDef = ascensionTier?.definition;
         p._pulseOverloadCounter = (p._pulseOverloadCounter || 0) + 1;
-        if (p._pulseOverloadCounter >= 3) {
+        if (p._pulseOverloadCounter >= (overloadDef?.procEvery || 3)) {
           p._pulseOverloadCounter = 0;
-          firePulseShell(p, a, dmg * 5, lvl, {
+          firePulseShell(p, a, dmg * (overloadDef?.damageMult || 5), lvl, {
             radius: 14,
             pierce: 999,
             col: '#FFD56A',
             isOverload: true,
             meta: {
               glowCol: '#FFE6A6',
+              overloadRadiusScale: overloadDef?.radiusScale || 2.0,
             },
           });
           return;
@@ -407,12 +730,15 @@ export const WDEFS = {
     fire(p, onHitEnemy) {
       const lvl = getWeaponLevel(p, 'emp');
       const ascension = getAscension(p, 'emp');
+      const ascensionTier = getAscensionTierData(p, 'emp');
       const scaling = getEmpScaling(lvl);
       const r = scaling.radius;
       const dmg = getEmpBaseDamage(p) * scaling.dmgMult;
       const stunDur = scaling.stun;
 
       if (ascension === 'triple_pulse') {
+        const tripleDef = ascensionTier?.definition;
+        const radiusMult = tripleDef?.radiusMult || 1;
         this.tripleWaves = this.tripleWaves || [];
         this.tripleWaves.push({
           x: p.x,
@@ -420,14 +746,18 @@ export const WDEFS = {
           r1: 0,
           r2: 0,
           r3: 0,
-          maxR1: (160 + lvl * 38) * 1.0,
-          maxR2: (160 + lvl * 38) * 1.5,
-          maxR3: (160 + lvl * 38) * 2.2,
+          maxR1: (160 + lvl * 38) * 1.0 * radiusMult,
+          maxR2: (160 + lvl * 38) * 1.5 * radiusMult,
+          maxR3: (160 + lvl * 38) * 2.2 * radiusMult,
           speed1: 500,
           speed2: 350,
           speed3: 220,
           dmg,
           stunBase: stunDur,
+          midDamageMult: tripleDef?.midDamageMult || 0.6,
+          outerDamageMult: tripleDef?.outerDamageMult || 0.3,
+          midStunMult: tripleDef?.midStunMult || 0,
+          outerStunMult: tripleDef?.outerStunMult || 0,
           hitEnemies: new Set(),
           hitBoss: false,
           life: 1.8,
@@ -468,6 +798,7 @@ export const WDEFS = {
     tick(p, dt, onHitEnemy, helpers = {}) {
       const lvl = getWeaponLevel(p, 'swarm');
       const ascension = getAscension(p, 'swarm');
+      const ascensionTier = getAscensionTierData(p, 'swarm');
       const cnt = getSwarmCount(lvl);
       const orR = 85 + lvl * 15;
       const seekR = 190 + lvl * 30;
@@ -487,8 +818,9 @@ export const WDEFS = {
         const isNova = !!options.isNova;
         const canFrenzy = !isNova && ascension === 'frenzy';
         const canSplit = !isNova && ascension === 'split_swarm';
-        const speedMult = isNova ? 2 : (canFrenzy && d.frenzy ? 2 : 1);
-        const damageMult = canFrenzy && d.frenzy ? 2 : 1;
+        const frenzyDef = ascension === 'frenzy' ? ascensionTier?.definition : null;
+        const speedMult = isNova ? 2 : (canFrenzy && d.frenzy ? (frenzyDef?.speedMult || 2) : 1);
+        const damageMult = canFrenzy && d.frenzy ? (frenzyDef?.damageMult || 2) : 1;
         const hitCooldown = d.frenzy ? 0.08 : 0.55;
         const droneOrbitR = isNova ? orR * 1.3 : orR;
 
@@ -502,7 +834,7 @@ export const WDEFS = {
           d.frenzyT = Math.max(0, (d.frenzyT || 0) - dt);
           if (d.frenzy && d.frenzyT <= 0) {
             d.frenzy = false;
-            d.frenzyCD = 3.0;
+            d.frenzyCD = frenzyDef?.cooldown || 3.0;
           }
         }
 
@@ -557,7 +889,7 @@ export const WDEFS = {
 
             if (canFrenzy && hit?.killed && prevTarget !== boss && !d.frenzy && d.frenzyCD <= 0) {
               d.frenzy = true;
-              d.frenzyT = 3.0;
+              d.frenzyT = frenzyDef?.duration || 3.0;
               helpers.onFrenzyStart?.(d);
             }
 
@@ -695,8 +1027,10 @@ export function handleCryoImpact(game, bullet, target) {
   }
   const cryoLevel = bullet.meta?.cryoLevel || 1;
   target._freezeSourceLevel = cryoLevel;
-  const freezeAmount = bullet.meta?.freeze
-    ? getEffectiveFreezeThreshold(target)
+  const freezeAmount = bullet.meta?.permafrostFreeze
+    ? getPermafrostFreezeAmount(target)
+    : bullet.meta?.freeze
+      ? getEffectiveFreezeThreshold(target)
     : (bullet.meta?.freezeAmount || getCryoFreezeAmount(cryoLevel));
   applyFreezeMeter(target, freezeAmount);
 }
@@ -704,23 +1038,27 @@ export function handleCryoImpact(game, bullet, target) {
 export function tickCryoAscension(P, enemyList, dt, addParticle, applyFreezeMeterFn, onTickDamage) {
   const ascension = getAscension(P, 'cryo');
   if (ascension !== 'frost_field') return;
+  const fieldDef = getAscensionTierData(P, 'cryo')?.definition;
+  const radius = fieldDef?.radius || 150;
+  const freezeTime = fieldDef?.freezeTime || 1.5;
+  const dpsMult = fieldDef?.dpsMult || 5;
 
   enemyList.forEach(e => {
     if (!e || e.hp <= 0) return;
     const dx = e.x - P.x;
     const dy = e.y - P.y;
-    if (dx * dx + dy * dy > 150 * 150) {
+    if (dx * dx + dy * dy > radius * radius) {
       e._frostFieldTime = 0;
       return;
     }
     applySlow(e, 0.4, 0.4);
     e._frostFieldTime = (e._frostFieldTime || 0) + dt;
-    onTickDamage?.(e, P.dmg * 5 * dt, '#00CFFF');
-    if (e._frostFieldTime >= 1.5) {
+    onTickDamage?.(e, P.dmg * dpsMult * dt, '#00CFFF');
+    if (e._frostFieldTime >= freezeTime) {
       applyFreezeMeterFn(e, getEffectiveFreezeThreshold(e));
     }
   });
-  addParticle?.(P.x, P.y, 150, 'rgba(0, 207, 255, 0.22)', 1.5, 0.18);
+  addParticle?.(P.x, P.y, radius, 'rgba(0, 207, 255, 0.22)', 1.5, 0.18);
 }
 
 export function applyFreezeMeter(e, amount) {
@@ -762,7 +1100,13 @@ export function triggerPulseShockwave(e, dmg, onHitEnemy) {
 }
 
 export function triggerPulseExplosion(game, bullet, x, y, onHitEnemy, onHitBoss) {
-  const radius = bullet.meta?.isOverload ? 156 : bullet.meta?.chainProc ? 117 : bullet.meta?.isFragment ? 48 : 78;
+  const radius = bullet.meta?.isOverload
+    ? 78 * (bullet.meta?.overloadRadiusScale || 2)
+    : bullet.meta?.chainProc
+      ? 117
+      : bullet.meta?.isFragment
+        ? (bullet.meta?.fragmentRadius || 48)
+        : 78;
   const splash = bullet.dmg * 0.65;
   const ringMr = bullet.meta?.isOverload ? radius * 2.5 : bullet.meta?.chainProc ? radius * 1.5 : radius;
   addRing(x, y, ringMr, '#FFB627', 2.8, 0.5);

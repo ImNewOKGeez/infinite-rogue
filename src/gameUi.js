@@ -1,6 +1,6 @@
 import { ARC_BLADE_TIERS } from './arcBlade.js';
-import { getOwnedWeaponIds, getWeaponLevel } from './player.js';
-import { EMP_SCALING, MOLOTOV_TIERS, WDEFS } from './weapons.js';
+import { getAscensionTier, getOwnedWeaponIds, getWeaponLevel } from './player.js';
+import { ASCENSIONS, EMP_SCALING, MOLOTOV_TIERS, WDEFS, getAscensionTierDefinition } from './weapons.js';
 
 export function wStats(wid, lvl, p) {
   const rb = p.rateBonus || 1;
@@ -38,69 +38,22 @@ export function wStats(wid, lvl, p) {
   return [];
 }
 
-function wDesc(wid, lvl) {
-  return ({
-    cryo: {
-      1: 'Fires a single Cryo lance that slows enemies by 50% for 2 seconds and pierces 1 target.',
-      2: 'Adds a second Cryo lance and starts spreading the volley into a light fan.',
-      3: 'Adds a third Cryo lance, giving the weapon a wider spread for better lane coverage.',
-      4: 'Adds a fourth Cryo lance and widens the spread again to cover more of the screen.',
-      5: 'Adds a fifth Cryo lance with the widest spread version of the weapon.',
-    },
-    pulse: {
-      1: 'Launches a slow-cycling heavy Pulse round that explodes for strong burst damage on impact.',
-      2: 'The main Pulse detonation now throws cluster bombs outward when it lands.',
-      3: 'Cluster bombs now split again when they detonate, pushing the blast pattern much farther outward.',
-      4: 'Those secondary cluster bombs now split again, creating a third outward wave of explosions.',
-      5: 'Pulse reaches full cluster saturation, with yet another recursive split layer for a huge blast web.',
-    },
-    emp: {
-      1: 'Releases a 160px EMP burst that lightly damages and stuns enemies for 1.2 seconds.',
-      2: 'EMP grows to 200px, hits harder, and stuns for 1.4 seconds.',
-      3: 'EMP reaches 245px with stronger damage and a 1.6 second stun.',
-      4: 'EMP expands to 295px with a 1.8 second stun and higher control damage.',
-      5: 'EMP peaks at a 350px burst with a 2.0 second stun and 2.8x damage scaling.',
-    },
-    swarm: {
-      1: 'Deploys 2 orbiting drones that seek targets and strike automatically.',
-      2: 'Adds a third orbiting swarm drone.',
-      3: 'Adds a fourth orbiting swarm drone.',
-      4: 'Adds a fifth orbiting swarm drone.',
-      5: 'Adds a sixth orbiting swarm drone.',
-    },
-    molotov: {
-      1: 'Throws a Molotov toward the nearest enemy, creating one burning pool that deals continuous damage over time.',
-      2: 'The fire pool grows wider and burns harder while keeping a single throw target.',
-      3: 'Throws two bottles in a fan, creating two separate fire pools on landing.',
-      4: 'Those two pools grow larger and burn longer between throws.',
-      5: 'Throws three bottles in a wider fan, covering a broad zone in overlapping fire.',
-    },
-    barrier: {
-      1: 'Absorbs 40 damage per cycle. Active 4.2s, recharge 8s.',
-      2: 'Absorbs 65 damage per cycle. Active 5.1s, recharge 7s.',
-      3: 'Absorbs 95 damage per cycle. Active 5.9s, recharge 6s.',
-      4: 'Absorbs 130 damage per cycle. Active 6.8s, recharge 5s.',
-      5: 'Absorbs 175 damage per cycle. Active 8.5s, recharge 4s.',
-    },
-    arcblade: {
-      1: 'Throws a single orbiting boomerang blade that loops out and back around the player.',
-      2: 'The blade travels in a wider orbit and hits harder on each pass.',
-      3: 'Adds a second boomerang blade for mirrored orbit pressure.',
-      4: 'Both blades widen their orbit and gain more hit strength.',
-      5: 'Adds a third blade and reaches the weapon\'s fullest orbiting coverage.',
-    },
-  }[wid] || {})[lvl] || '';
-}
-
 export function renderUpgradeCard(upgrade, player, onClick) {
   if (upgrade.type === 'ascension') {
     const weapon = WDEFS[upgrade.wid];
-    const optionNames = (upgrade.options || []).map(option => option.name).join(' &middot; ');
-    return `<div class="uc wep" data-upgrade-id="${upgrade.id}" tabindex="0" onclick="${onClick}" style="border:1px solid rgba(0,207,255,0.85);box-shadow:0 0 0 2px rgba(0,207,255,0.18), inset 0 0 0 1px rgba(255,255,255,0.08);background:linear-gradient(180deg, rgba(5,14,20,0.98), rgba(11,19,28,0.98))">
-      <div class="ut" style="color:#00CFFF">ASCENSION</div>
-      <div class="un" style="color:${weapon.col}">${weapon.icon} ${weapon.name}</div>
-      <div class="ud">THIS L5 WEAPON CAN TRANSFORM</div>
-      <div class="us">${optionNames}</div></div>`;
+    const optionRows = (upgrade.options || [])
+      .map(option => renderStatLine(`PATH: ${option.name}`))
+      .join('');
+    return buildUpgradeCard({
+      variant: 'asc',
+      title: 'ASCENSION',
+      name: `${weapon.icon} ${weapon.name}`,
+      nameColor: weapon.col,
+      subtitle: 'Choose an evolution path.',
+      content: optionRows,
+      upgrade,
+      onClick,
+    });
   }
 
   if (upgrade.type === 'wep') {
@@ -113,35 +66,64 @@ export function renderUpgradeCard(upgrade, player, onClick) {
     const statsHTML = newStats.map((stat, index) => {
       const current = currentStats?.[index];
       if (current && current !== stat) {
-        return `<div class="stat-change">
-          <span class="stat-old">${current}</span>
-          <span class="stat-arrow">&rarr;</span>
-          <span class="stat-new">${stat}</span>
-        </div>`;
+        return renderStatChange(current, stat);
       }
       if (isNewWeapon && stat) {
-        return `<div class="stat-new-only" style="color:#8ab">STARTS: ${stat}</div>`;
+        return renderStatLine(stat);
       }
-      return `<div class="stat-new-only">${stat}</div>`;
+      return '';
     }).join('');
 
-    const subLine = upgrade.isNew ? `UNLOCKS WEAPON ${weapon.name}` : `UPGRADES ${weapon.name} TO T${upgrade.lvl}`;
-    const detailLines = [upgrade.isNew ? weaponUnlockDesc(upgrade.wid) : wDesc(upgrade.wid, upgrade.lvl)].filter(Boolean);
-    return `<div class="uc wep" data-upgrade-id="${upgrade.id}" tabindex="0" onclick="${onClick}">
-      <div class="ut">WEAPON</div>
-      <div class="un">${weapon.icon} ${weapon.name} T${upgrade.lvl}</div>
-      <div class="ud">${subLine}</div>
-      <div class="us">${statsHTML}${detailLines.map(line => `<div class="stat-copy">${line}</div>`).join('')}</div></div>`;
+    const subLine = upgrade.isNew
+      ? weaponUnlockDesc(upgrade.wid)
+      : weaponUpgradeSummary(upgrade.wid, upgrade.lvl);
+    return buildUpgradeCard({
+      variant: 'wep',
+      title: 'WEAPON',
+      name: `${weapon.icon} ${weapon.name} T${upgrade.lvl}`,
+      subtitle: subLine,
+      content: statsHTML || renderStatLine('No numeric change'),
+      upgrade,
+      onClick,
+    });
+  }
+
+  if (upgrade.type === 'asc_tier') {
+    const weapon = WDEFS[upgrade.wid];
+    const currentTier = getAscensionTier(player, upgrade.wid) || upgrade.currentTier || 1;
+    const nextTier = upgrade.tier || (currentTier + 1);
+    const currentDef = getAscensionTierDefinition(upgrade.ascensionId, currentTier);
+    const nextDef = upgrade.tierDef || getAscensionTierDefinition(upgrade.ascensionId, nextTier);
+    const detail = upgrade.tierDef?.description || 'Strengthens this ascended weapon without changing how it operates.';
+    const ascensionName = (ASCENSIONS[upgrade.wid] || []).find(option => option.id === upgrade.ascensionId)?.name
+      || upgrade.ascensionId?.replaceAll('_', ' ').toUpperCase()
+      || 'ASCENSION';
+    const statChanges = formatAscensionTierChanges(currentDef, nextDef);
+    return buildUpgradeCard({
+      variant: 'asc',
+      title: 'ASCENSION TIER',
+      name: `${weapon.icon} ${ascensionName} T${nextTier}`,
+      nameColor: weapon.col,
+      subtitle: detail,
+      content: statChanges || renderStatLine('No numeric change'),
+      upgrade,
+      onClick,
+    });
   }
 
   const preview = upgrade.apply ? (() => {
     const clone = { ...player };
     return upgrade.apply(clone);
   })() : [];
-  return `<div class="uc pas" data-upgrade-id="${upgrade.id}" tabindex="0" onclick="${onClick}">
-    <div class="ut">PASSIVE UPGRADE</div>
-    <div class="un">${passiveHeadline(upgrade.id)}</div>
-    <div class="us">${formatPreviewLines(preview)}</div></div>`;
+  return buildUpgradeCard({
+    variant: 'pas',
+    title: 'PASSIVE UPGRADE',
+    name: passiveHeadline(upgrade.id),
+    subtitle: passiveSummary(upgrade.id),
+    content: formatPreviewLines(preview),
+    upgrade,
+    onClick,
+  });
 }
 
 function formatPreviewLines(lines) {
@@ -149,26 +131,167 @@ function formatPreviewLines(lines) {
     if (typeof line !== 'string') return '';
     const parts = line.split(' -> ');
     if (parts.length === 2) {
-      return `<div class="stat-change">
-        <span class="stat-old">${parts[0]}</span>
-        <span class="stat-arrow">&rarr;</span>
-        <span class="stat-new">${parts[1]}</span>
-      </div>`;
+      return renderStatChange(parts[0], parts[1]);
     }
-    return `<div class="stat-new-only">${line}</div>`;
+    return renderStatLine(line);
   }).join('');
+}
+
+function buildUpgradeCard({ variant, title, name, subtitle = '', content = '', upgrade, onClick, nameColor = '' }) {
+  const nameStyle = nameColor ? ` style="color:${nameColor}"` : '';
+  return `<div class="uc ${variant}" data-upgrade-id="${upgrade.id}" tabindex="0" onclick="${onClick}">
+    <div class="ut">${title}</div>
+    <div class="un"${nameStyle}>${name}</div>
+    ${subtitle ? `<div class="ud">${subtitle}</div>` : ''}
+    <div class="us">${content}</div></div>`;
+}
+
+function renderStatChange(beforeText, afterText) {
+  const before = parseStatLine(beforeText);
+  const after = parseStatLine(afterText);
+  const hasSharedLabel = before.label && before.label === after.label;
+
+  if (hasSharedLabel) {
+    return `<div class="stat-change">
+      <span class="stat-label">${before.label}</span>
+      <div class="stat-values">
+        <span class="stat-old">${before.value}</span>
+        <span class="stat-arrow">&rarr;</span>
+        <span class="stat-new">${after.value}</span>
+      </div>
+    </div>`;
+  }
+
+  return `<div class="stat-change">
+    <div class="stat-values stat-values-full">
+      <span class="stat-old">${beforeText}</span>
+      <span class="stat-arrow">&rarr;</span>
+      <span class="stat-new">${afterText}</span>
+    </div>
+  </div>`;
+}
+
+function renderStatLine(text, tone = 'default') {
+  const parsed = parseStatLine(text);
+  if (parsed.label) {
+    return `<div class="stat-line stat-line-${tone}">
+      <span class="stat-label">${parsed.label}</span>
+      <span class="stat-line-value">${parsed.value}</span>
+    </div>`;
+  }
+  return `<div class="stat-line stat-line-${tone}">
+    <span class="stat-line-value">${text}</span>
+  </div>`;
+}
+
+function parseStatLine(text) {
+  if (typeof text !== 'string') return { label: '', value: '' };
+  const separator = text.indexOf(': ');
+  if (separator === -1) return { label: '', value: text };
+  return {
+    label: text.slice(0, separator),
+    value: text.slice(separator + 2),
+  };
+}
+
+const ASCENSION_TIER_FIELD_FORMATTERS = {
+  shardCount: { label: 'Number of shards', format: value => `${value}` },
+  shardDamageMult: { label: 'Shard damage mult', format: value => `x${Number(value).toFixed(1)}` },
+  shardFreeze: { label: 'Shard freeze build', format: value => `${Number(value).toFixed(1)}` },
+  shardPierce: { label: 'Shard pierce', format: value => `${value}` },
+  projectileCount: { label: 'Projectile count', format: value => `${value}` },
+  projectileSpeed: { label: 'Cryo speed', format: value => `${value}` },
+  projectilePierce: { label: 'Cryo pierce', format: value => `${value}` },
+  projectileRadius: { label: 'Projectile radius', format: value => `${Number(value).toFixed(1)}` },
+  spreadRadius: { label: 'Spread radius', format: value => `${value}px` },
+  spreadInterval: { label: 'Spread interval', format: value => `${Number(value).toFixed(2)}s` },
+  spreadFreezePct: { label: 'Spread freeze', format: value => `${Math.round(Number(value) * 100)}% threshold` },
+  novaRadius: { label: 'Nova radius', format: value => `${value}px` },
+  novaDamageMult: { label: 'Nova damage', format: value => `x${Number(value).toFixed(2)}` },
+  freezeSeed: { label: 'Freeze seed', format: value => `${Number(value).toFixed(1)}` },
+  procEvery: { label: 'Proc every', format: value => `${value} shots` },
+  beamCount: { label: 'Beam count', format: value => `${value}` },
+  damageMult: { label: 'Damage mult', format: value => `x${Number(value).toFixed(2)}` },
+  radius: { label: 'Radius', format: value => `${value}px` },
+  dpsMult: { label: 'DPS mult', format: value => `x${Number(value).toFixed(1)}` },
+  freezeTime: { label: 'Freeze time', format: value => `${Number(value).toFixed(2)}s` },
+  maxChance: { label: 'Max shatter chance', format: value => `${Math.round(Number(value) * 100)}%` },
+  minChance: { label: 'Min shatter chance', format: value => `${Math.round(Number(value) * 100)}%` },
+};
+
+function formatAscensionTierChanges(currentDef, nextDef) {
+  if (!nextDef) return '';
+  const keys = Object.keys(nextDef).filter(key => key !== 'description');
+  const changed = keys
+    .filter(key => currentDef?.[key] !== nextDef[key])
+    .map(key => {
+      const formatter = ASCENSION_TIER_FIELD_FORMATTERS[key];
+      if (!formatter) return '';
+      const before = formatter.format(currentDef?.[key]);
+      const after = formatter.format(nextDef[key]);
+      return renderStatChange(`${formatter.label}: ${before}`, `${formatter.label}: ${after}`);
+    })
+    .filter(Boolean);
+  return changed.join('');
 }
 
 export function weaponUnlockDesc(wid) {
   return ({
-    cryo: 'Fires slowing Cryo lances that scale by adding more projectiles and wider spread.',
-    pulse: 'Launches a heavy explosive Pulse shell that upgrades into cluster-bomb bursts.',
-    emp: 'Sends a radial EMP stun that upgrades mostly through larger and larger control radius.',
-    swarm: 'Deploys orbiting drones that keep scaling by adding more swarm bodies.',
-    molotov: 'Lobs arcing bottles that burst into persistent fire pools for area denial and damage-over-time.',
-    barrier: 'Wraps the player in a cycling shield that absorbs damage, then recharges after breaking.',
-    arcblade: 'Throws orbiting boomerang blades that loop out and back around the player.',
+    cryo: 'Fires slowing projectiles in a widening spread.',
+    pulse: 'Launches explosive shots that grow into cluster bursts.',
+    emp: 'Creates a stunning aura burst with scaling radius.',
+    swarm: 'Deploys orbiting drones that auto-seek targets.',
+    molotov: 'Throws fire bottles that leave burning pools.',
+    barrier: 'Creates a shield that absorbs damage and recharges.',
+    arcblade: 'Spawns orbiting blades that slice nearby enemies.',
   }[wid] || 'Unlocks a new weapon.');
+}
+
+function weaponUpgradeSummary(wid, lvl) {
+  return ({
+    cryo: {
+      2: 'Adds another projectile.',
+      3: 'Adds another projectile.',
+      4: 'Adds another projectile.',
+      5: 'Adds another projectile.',
+    },
+    pulse: {
+      2: 'Adds cluster explosions.',
+      3: 'Adds deeper cluster splitting.',
+      4: 'Adds another split layer.',
+      5: 'Maxes out cluster splitting.',
+    },
+    emp: {
+      2: 'Increases stun radius and damage.',
+      3: 'Increases stun radius and duration.',
+      4: 'Increases stun radius and duration.',
+      5: 'Maxes out stun radius and damage.',
+    },
+    swarm: {
+      2: 'Adds another drone.',
+      3: 'Adds another drone.',
+      4: 'Adds another drone.',
+      5: 'Adds another drone.',
+    },
+    molotov: {
+      2: 'Increases pool size and burn damage.',
+      3: 'Throws an extra bottle.',
+      4: 'Increases pool size and duration.',
+      5: 'Throws a third bottle.',
+    },
+    barrier: {
+      2: 'Absorbs more damage and recharges faster.',
+      3: 'Absorbs more damage and recharges faster.',
+      4: 'Absorbs more damage and recharges faster.',
+      5: 'Maxes absorb and recharge speed.',
+    },
+    arcblade: {
+      2: 'Widens orbit and increases damage.',
+      3: 'Adds a second blade.',
+      4: 'Widens orbit and increases damage.',
+      5: 'Adds a third blade.',
+    },
+  }[wid] || {})[lvl] || 'Improves this weapon.';
 }
 
 function passiveHeadline(id) {
@@ -180,6 +303,17 @@ function passiveHeadline(id) {
     p_dg: 'INCREASE DODGE CHANCE',
     p_rt: 'INCREASE ATTACK SPEED',
   }[id] || 'INCREASE RUN-WIDE STATS');
+}
+
+function passiveSummary(id) {
+  return ({
+    p_spd: 'Move faster.',
+    p_dmg: 'Boost all weapon damage.',
+    p_mag: 'Pull XP from farther away.',
+    p_hp: 'Raise max HP and heal.',
+    p_dg: 'Increase dodge chance.',
+    p_rt: 'Attack more often.',
+  }[id] || 'Improve run-wide stats.');
 }
 
 export function formatRunTime(seconds) {

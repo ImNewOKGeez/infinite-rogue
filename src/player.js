@@ -42,6 +42,11 @@ export function getAscension(p, weaponId) {
   return p.ascensions?.[weaponId] || null;
 }
 
+export function getAscensionTier(p, weaponId) {
+  if (!getAscension(p, weaponId)) return 0;
+  return Math.max(1, Math.min(5, p.ascensionTiers?.[weaponId] || 1));
+}
+
 export function getOwnedWeaponIds(p) {
   return Object.entries(p.ws)
     .filter(([, state]) => state.owned && state.lvl > 0)
@@ -82,6 +87,7 @@ export function mkPlayer(_W, _H, char = CHARACTERS.ghost) {
     rateBonus: 1,
     ws,
     ascensions: {},
+    ascensionTiers: {},
     _arcDiscs: [],
     _sawBlade: null,
     _lanceCounter: 0,

@@ -1,5 +1,5 @@
-import { addWeapon, getOwnedWeaponIds, getWeaponLevel, upgradeWeaponLevel } from './player.js';
-import { ASCENSIONS, bullets, WDEFS } from './weapons.js';
+import { addWeapon, getAscensionTier, getOwnedWeaponIds, getWeaponLevel, upgradeWeaponLevel } from './player.js';
+import { ASCENSIONS, bullets, WDEFS, getAscensionTierDefinition } from './weapons.js';
 
 export const PASSIVES = [
   { id: 'spd', label: 'SPRINT', apply: p => { const w = p.spd; p.spd = Math.round(p.spd * 1.22); return [`Speed: ${w} -> ${p.spd}`]; } },
@@ -19,6 +19,21 @@ export function buildPool(p, options = {}) {
     const maxLvl = WDEFS[wid]?.maxLvl || 5;
     if (lvl > 0 && lvl < maxLvl) weps.push({ id: 'wu_' + wid, type: 'wep', wid, lvl: lvl + 1 });
     else if (lvl === 0 && slots < 4) weps.push({ id: 'wn_' + wid, type: 'wep', wid, lvl: 1, isNew: true });
+    if (p.ascensions?.[wid]) {
+      const currentAscTier = getAscensionTier(p, wid);
+      if (currentAscTier >= 1 && currentAscTier < 5) {
+        const nextTier = currentAscTier + 1;
+        weps.push({
+          id: 'wat_' + wid,
+          type: 'asc_tier',
+          wid,
+          ascensionId: p.ascensions[wid],
+          tier: nextTier,
+          currentTier: currentAscTier,
+          tierDef: getAscensionTierDefinition(p.ascensions[wid], nextTier),
+        });
+      }
+    }
   });
 
   const pas = shuffledCopy(PASSIVES);
@@ -79,12 +94,19 @@ export function applyUpgrade(id, p) {
     const pid = id.slice(2);
     const u = PASSIVES.find(x => x.id === pid);
     if (u) u.apply(p);
+    return;
+  }
+  if (id.startsWith('wat_')) {
+    const wid = id.slice(4);
+    applyAscensionTier(p, wid, getAscensionTier(p, wid) + 1);
   }
 }
 
 export function applyAscension(p, weaponId, ascensionId, options = {}) {
   if (!p.ascensions) p.ascensions = {};
+  if (!p.ascensionTiers) p.ascensionTiers = {};
   p.ascensions[weaponId] = ascensionId;
+  p.ascensionTiers[weaponId] = 1;
 
   if (weaponId === 'cryo' && !options.preview) {
     p.ft.cryo = 0;
@@ -92,6 +114,15 @@ export function applyAscension(p, weaponId, ascensionId, options = {}) {
       if (bullets[i].meta?.type === 'cryo') bullets.splice(i, 1);
     }
   }
+}
+
+export function applyAscensionTier(p, weaponId, nextTier = null) {
+  if (!p.ascensions?.[weaponId]) return 0;
+  if (!p.ascensionTiers) p.ascensionTiers = {};
+  const currentTier = getAscensionTier(p, weaponId) || 1;
+  const targetTier = Math.max(1, Math.min(5, nextTier ?? (currentTier + 1)));
+  p.ascensionTiers[weaponId] = targetTier;
+  return targetTier;
 }
 
 function pickRandom(arr) {

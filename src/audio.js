@@ -131,6 +131,12 @@ export function playCryoFire() {
   osc('sine', 900, 0.06, 0.003, 0.09, 340);
 }
 
+export function playPermafrostFire() {
+  noiseShot(0.045, 0.002, 0.055, 'bandpass', 700, 1.3);
+  osc('triangle', 120, 0.16, 0.004, 0.13, 72);
+  osc('sine', 82, 0.14, 0.003, 0.16, 52);
+}
+
 export function playCryoStormSound() {
   osc('triangle', 1200, 0.045, 0.01, 0.15, 850);
   osc('sine', 1600, 0.03, 0.01, 0.15, 1100);

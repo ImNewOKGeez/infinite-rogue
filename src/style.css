@@ -216,30 +216,84 @@ canvas { display: block; position: absolute; top: 0; left: 0; }
 .uc.dismissed { opacity: 0; transition: opacity 0.15s ease; }
 .uc.wep { border-left: 2px solid #1DFFD0; }
 .uc.pas { border-left: 2px solid #BF77FF; }
+.uc.asc {
+  border-left: 2px solid #00CFFF;
+  border-color: rgba(0,207,255,0.55);
+  box-shadow: 0 0 0 1px rgba(0,207,255,0.16), inset 0 0 0 1px rgba(255,255,255,0.04);
+  background: linear-gradient(180deg, rgba(5,14,20,0.98), rgba(11,19,28,0.98));
+}
 .uc.wep .ut { color: #6ff7d9; }
 .uc.pas .ut { color: #d39cff; }
+.uc.asc .ut { color: #00CFFF; }
 .uc .ut { font-size: 8px; letter-spacing: 2px; color: #444; margin-bottom: 6px; text-transform: uppercase; font-weight: 700; }
 .uc .un { font-size: 13px; color: #eee; margin-bottom: 4px; }
 .uc .ud { font-size: 10px; color: #8a95a9; line-height: 1.5; margin-bottom: 8px; }
 .uc .us { max-height: 0; overflow: hidden; opacity: 0; font-size: 10px; color: #1DFFD0; line-height: 1.7; transition: max-height 0.18s, opacity 0.18s, margin-top 0.18s; }
 .uc:hover .us, .uc:focus-visible .us { max-height: 220px; opacity: 1; margin-top: 8px; }
+.stat-line,
 .stat-change {
   display: flex;
-  align-items: center;
+  flex-direction: column;
+  align-items: flex-start;
   gap: 4px;
   font-size: 10px;
   line-height: 1.6;
+  padding: 6px 8px;
+  margin-bottom: 4px;
+  border: 1px solid rgba(138,149,169,0.16);
+  border-radius: 6px;
+  background: rgba(255,255,255,0.025);
+}
+.stat-line {
+  margin-bottom: 4px;
+}
+.stat-label {
+  color: #8a95a9;
+  letter-spacing: 1px;
+  text-transform: uppercase;
+  font-size: 9px;
+}
+.stat-line-value {
+  color: #1DFFD0;
+  padding: 1px 6px;
+  border-radius: 999px;
+  background: rgba(29,255,208,0.12);
+  border: 1px solid rgba(29,255,208,0.22);
+}
+.stat-line-start .stat-label {
+  color: #7d8799;
+}
+.stat-line-start .stat-line-value {
+  color: #d7edf3;
+  background: rgba(138,149,169,0.12);
+  border-color: rgba(138,149,169,0.18);
+}
+.stat-values {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.stat-values-full {
+  width: 100%;
 }
 .stat-old {
-  color: #444;
-  text-decoration: line-through;
+  color: #7d8799;
+  padding: 1px 6px;
+  border-radius: 999px;
+  background: rgba(138,149,169,0.12);
+  border: 1px solid rgba(138,149,169,0.18);
 }
 .stat-arrow {
-  color: #555;
+  color: rgba(29,255,208,0.55);
   font-size: 9px;
 }
 .stat-new {
   color: #1DFFD0;
+  padding: 1px 6px;
+  border-radius: 999px;
+  background: rgba(29,255,208,0.12);
+  border: 1px solid rgba(29,255,208,0.22);
 }
 .stat-new-only {
   color: #1DFFD0;

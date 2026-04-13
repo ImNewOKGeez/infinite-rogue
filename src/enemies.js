@@ -34,8 +34,8 @@ const ENEMY_DEFS = {
     shape: 'pent',
     stunImmune: true,
     slowImmune: true,
+    freezeImmune: true,
     knockImmune: true,
-    freezeThreshMult: 2,
   },
   leech: {
     r: 14,
@@ -284,6 +284,32 @@ function maybeSpreadFreeze(frozenEnemy) {
   applyFreezeMeter(targetEnemy, spreadAmount);
 }
 
+function spreadPermafrostFreeze(frozenEnemy, dt, P) {
+  if (!frozenEnemy?.frozen || !hasAscension(P, 'cryo', 'permafrost')) return;
+
+  const permafrostTier = Math.max(1, Math.min(5, P?.ascensionTiers?.cryo || 1));
+  const spreadDefs = {
+    1: { spreadRadius: 120, spreadInterval: 0, spreadFreezePct: 0 },
+    2: { spreadRadius: 120, spreadInterval: 1.2, spreadFreezePct: 0.35 },
+    3: { spreadRadius: 120, spreadInterval: 0.9, spreadFreezePct: 0.35 },
+    4: { spreadRadius: 120, spreadInterval: 0.65, spreadFreezePct: 0.35 },
+    5: { spreadRadius: 120, spreadInterval: 0.45, spreadFreezePct: 0.35 },
+  };
+  const spreadDef = spreadDefs[permafrostTier] || spreadDefs[1];
+  if (!spreadDef.spreadInterval || !spreadDef.spreadFreezePct) return;
+
+  frozenEnemy._permafrostSpreadT = (frozenEnemy._permafrostSpreadT || 0) + dt;
+  if (frozenEnemy._permafrostSpreadT < spreadDef.spreadInterval) return;
+  frozenEnemy._permafrostSpreadT = 0;
+
+  const radiusSq = spreadDef.spreadRadius * spreadDef.spreadRadius;
+  enemies.forEach(targetEnemy => {
+    if (!targetEnemy || targetEnemy === frozenEnemy || targetEnemy.hp <= 0 || targetEnemy.frozen || targetEnemy.freezeCooldown > 0) return;
+    if (dist2(frozenEnemy, targetEnemy) > radiusSq) return;
+    applyFreezeMeter(targetEnemy, getEffectiveFreezeThreshold(targetEnemy) * spreadDef.spreadFreezePct);
+  });
+}
+
 export function updateEnemyFreezeState(e, dt, P = null) {
   ensureFreezeState(e);
   const effectiveThreshold = getEffectiveFreezeThreshold(e);
@@ -293,10 +319,12 @@ export function updateEnemyFreezeState(e, dt, P = null) {
 
   if (e.frozen) {
     e.frozenTimer = Math.max(0, (e.frozenTimer || 0) - dt);
+    spreadPermafrostFreeze(e, dt, P);
     if (e.frozenTimer <= 0) {
       e.frozen = false;
       e.frozenTimer = 0;
       e.permafrost = false;
+      e._permafrostSpreadT = 0;
       e.freezeMeter = 0;
       e.freezeCooldown = 4;
       e.frostLevel = 0;
@@ -311,6 +339,7 @@ export function updateEnemyFreezeState(e, dt, P = null) {
     e.frozen = true;
     e.permafrost = hasAscension(P, 'cryo', 'permafrost');
     e.frozenTimer = e.permafrost ? 99999 : 1.5;
+    e._permafrostSpreadT = 0;
     e.freezeMeter = 0;
     e.slowT = 0;
     e.frostLevel = 3;
