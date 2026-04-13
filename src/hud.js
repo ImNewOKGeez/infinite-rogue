@@ -1,5 +1,5 @@
 import { CHARACTERS, getOwnedWeaponIds, getWeaponLevel } from './player.js';
-import { getSave, SYNERGIES, isDiscovered } from './progression.js';
+import { getSave, SYNERGIES, isDiscovered, getRatingTier, RATING_COLORS } from './progression.js';
 import { WDEFS } from './weapons.js';
 import { playUIClick } from './audio.js';
 
@@ -147,7 +147,7 @@ export function updateHUD(P, gt, WDEFS) {
     } else {
       el.className = 'ws';
       el.style.cssText = '';
-      el.innerHTML = `<div class="wi" style="color:#282828">-</div><div class="wn" style="color:#282828">EMPTY</div>`;
+      el.innerHTML = `<div class="wi" style="color:#444">?</div><div class="wn" style="color:#444">---</div>`;
     }
   }
 }
@@ -281,11 +281,14 @@ export function showRecordsScreen(onBack) {
         </div>`;
     }
 
+    const timeRating = getRatingTier(bests.bestTime);
+    const timeColor = RATING_COLORS[timeRating];
+
     return `
       <div class="records-char-block">
         <div class="records-char-name" style="color:${char.col}">${char.name}</div>
         <div class="records-list">
-          <div><span>BEST TIME</span><strong>${formatTime(bests.bestTime)}</strong></div>
+          <div><span>BEST TIME</span><strong>${formatTime(bests.bestTime)}</strong><span style="color:${timeColor};font-size:10px;letter-spacing:1px;margin-left:8px">[${timeRating}]</span></div>
           <div><span>MOST KILLS</span><strong>${bests.mostKills}</strong></div>
           <div><span>HIGHEST LEVEL</span><strong>${bests.highestLevel}</strong></div>
           <div><span>TOTAL RUNS</span><strong>${bests.totalRuns}</strong></div>
@@ -309,6 +312,9 @@ export function showRecordsScreen(onBack) {
       </div>`;
   }).join('');
 
+  const globalTimeRating = getRatingTier(global.bestTime);
+  const globalTimeColor = RATING_COLORS[globalTimeRating];
+
   showOverlay(`
     <div class="records-shell">
       <div class="records-head">
@@ -319,7 +325,7 @@ export function showRecordsScreen(onBack) {
         <section class="records-panel">
           <div class="panel-label">GLOBAL BESTS</div>
           <div class="records-list">
-            <div><span>BEST TIME</span><strong>${formatTime(global.bestTime)}</strong></div>
+            <div><span>BEST TIME</span><strong>${formatTime(global.bestTime)}</strong><span style="color:${globalTimeColor};font-size:10px;letter-spacing:1px;margin-left:8px">[${globalTimeRating}]</span></div>
             <div><span>MOST KILLS</span><strong>${global.mostKills}</strong></div>
             <div><span>HIGHEST LEVEL</span><strong>${global.highestLevel}</strong></div>
             <div><span>TOTAL RUNS</span><strong>${global.totalRuns}</strong></div>

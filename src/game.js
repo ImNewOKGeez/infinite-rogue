@@ -2436,19 +2436,26 @@ export class Game {
     const isNewKillBest = bestFields.has('mostKills');
     const timeStr = formatRunTimeView(this.gt);
     const surgeCount = this.surgeCount;
-    const weaponsHtml = getOwnedWeaponIds(this.P)
-      .map(id => {
-        const weapon = WDEFS[id];
-        const lvl = getWeaponLevel(this.P, id);
-        const asc = this.P.ascensions?.[id];
+    const allWeaponSlots = [];
+    for (let i = 0; i < 4; i++) {
+      const wid = this.P.ws[i];
+      if (wid) {
+        const weapon = WDEFS[wid];
+        const lvl = getWeaponLevel(this.P, wid);
+        const asc = this.P.ascensions?.[wid];
         const dots = '●'.repeat(lvl) + '○'.repeat(5 - lvl);
-        return `<div class="death-weapon-row">
+        allWeaponSlots.push(`<div class="death-weapon-row">
           <span style="color:${weapon.col}">${weapon.icon} ${weapon.name}</span>
           <span class="death-weapon-dots" style="color:${weapon.col}">${dots}</span>
           ${asc ? `<span class="death-asc-tag">ASC: ${asc.toUpperCase().replace(/_/g, ' ')}</span>` : ''}
-        </div>`;
-      })
-      .join('');
+        </div>`);
+      } else {
+        allWeaponSlots.push(`<div class="death-weapon-row" style="opacity:0.5">
+          <span style="color:#444">? ---</span>
+        </div>`);
+      }
+    }
+    const weaponsHtml = allWeaponSlots.join('');
     const synergiesHtml = this.runDiscoveries.size
       ? [...this.runDiscoveries].map(id => {
           const synergy = SYNERGIES.find(entry => entry.id === id);

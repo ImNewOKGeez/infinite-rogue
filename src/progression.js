@@ -158,3 +158,18 @@ export function recordDiscovery(synergyId) {
   writeSave(save);
   return true;
 }
+
+export function getRatingTier(timeInSeconds) {
+  const minutes = timeInSeconds / 60;
+  if (minutes < 2) return 'DEAD ON ARRIVAL';
+  if (minutes < 4) return 'SURVIVOR';
+  if (minutes < 6) return 'VETERAN';
+  return 'GHOST';
+}
+
+export const RATING_COLORS = {
+  'DEAD ON ARRIVAL': '#666666',
+  'SURVIVOR': '#FFB627',
+  'VETERAN': '#00CFFF',
+  'GHOST': '#FF2D9B',
+};
