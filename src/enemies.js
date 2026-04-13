@@ -29,7 +29,7 @@ const ENEMY_DEFS = {
     hpWaveScale: 0.4,
     spd: 72,
     dmg: 20,
-    xp: 8,
+    xp: 20,
     col: '#FF6600',
     shape: 'pent',
     stunImmune: true,
@@ -75,6 +75,7 @@ function mkStatusState() {
     overloadMarkT: 0,
     empMarkT: 0,
     hitFlash: 0,
+    hpBarVisT: 0,
   };
 }
 
@@ -319,6 +320,7 @@ export function tickEnemyStatus(e, dt) {
   if (e.cryoPulseCd > 0) e.cryoPulseCd -= dt;
   if (e.empMarkT > 0) e.empMarkT -= dt;
   if (e.hitFlash > 0) e.hitFlash -= dt;
+  if (e.hpBarVisT > 0) e.hpBarVisT -= dt;
 }
 
 let _extraTarget = null;

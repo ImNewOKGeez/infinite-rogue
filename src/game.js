@@ -24,7 +24,7 @@ import {
   renderPlaytestLab as renderPlaytestLabView,
   sanitizePlaytestBuild as sanitizePlaytestBuildView,
 } from './playtest.js';
-import { hexToRgba, traceEnemyShape } from './renderUtils.js';
+import { hexToRgba, brightenHexColor, traceEnemyShape } from './renderUtils.js';
 import {
   initAudio, resumeAudio,
   playEMPSound,
@@ -52,6 +52,14 @@ export class Game {
     this.running = false;
     this.paused = false;
     this.killCount = 0;
+    this.killsByType = {
+      runner: 0,
+      shooter: 0,
+      brute: 0,
+      titan: 0,
+      juggernaut: 0,
+      leech: 0,
+    };
     this.gems = [];
     this.healOrbs = [];
     this.healOrbDropCooldown = 0;
@@ -210,6 +218,14 @@ export class Game {
     this.dmgNums = [];
     this.gt = 0;
     this.killCount = 0;
+    this.killsByType = {
+      runner: 0,
+      shooter: 0,
+      brute: 0,
+      titan: 0,
+      juggernaut: 0,
+      leech: 0,
+    };
     this.surgeActive = false;
     this.surgeTimer = 0;
     this.nextSurge = 40;
@@ -2158,6 +2174,7 @@ export class Game {
     if (e.type === 'leech' && e.shieldActive) {
       e.shieldHp -= dmg;
       e.hitFlash = 0.1;
+      e.hpBarVisT = 2.0;
       if (!silent) addBurst(e.x, e.y, e.shieldCol || '#44FF88', isSynergy ? 6 : 3, isSynergy ? 90 : 60, 2.5, 0.32);
       if (!silent && dmg > 0) this.addDN(e.x, e.y - e.r, Math.round(dmg), e.shieldCol || '#44FF88', 0.7, isSynergy);
       if (!silent) {
@@ -2182,6 +2199,7 @@ export class Game {
     e.hp -= dmg;
     if (e.hp <= 0.001) e.hp = 0;
     e.hitFlash = 0.1;
+    e.hpBarVisT = 2.0;
     const numCol = isSynergy ? '#FFB627' : col === '#00CFFF' ? '#00CFFF' : col === '#BF77FF' ? '#BF77FF' : col === '#FF2D9B' ? '#FF2D9B' : '#fff';
     if (!silent && dmg > 0) this.addDN(e.x, e.y - e.r, Math.round(dmg), numCol, 0.7, isSynergy);
     if (!silent) addBurst(e.x, e.y, col, isSynergy ? 6 : 3, isSynergy ? 90 : 60, 2.5, 0.32);
@@ -2191,6 +2209,7 @@ export class Game {
     }
     if (e.hp <= 0) {
       this.killCount++;
+      this.killsByType[e.type]++;
       const xpVal = (this.P.char === 'hacker' && e.stunned) ? e.xp * 2 : e.xp;
       if (e.frozen) this._triggerCryoNova(e);
       e.permafrost = false;
@@ -2440,6 +2459,16 @@ export class Game {
           return `<div class="death-list-line">${prefix}<span>${synergy.label}</span></div>`;
         }).join('')
       : '<div class="death-empty">- none -</div>';
+    const encountersHtml = `
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px 16px;font-size:11px;font-family:Courier New,monospace;letter-spacing:1px">
+        <div><span style="color:#888">RUNNERS</span><br><strong style="color:#E24B4A">${this.killsByType.runner}</strong></div>
+        <div><span style="color:#888">SHOOTERS</span><br><strong style="color:#FFB627">${this.killsByType.shooter}</strong></div>
+        <div><span style="color:#888">BRUTES</span><br><strong style="color:#D4537E">${this.killsByType.brute}</strong></div>
+        <div><span style="color:#888">TITANS</span><br><strong style="color:#8B0000">${this.killsByType.titan}</strong></div>
+        <div><span style="color:#888">JUGGERNAUTS</span><br><strong style="color:#FF6600">${this.killsByType.juggernaut}</strong></div>
+        <div><span style="color:#888">SHIELD LEECHES</span><br><strong style="color:#1A6B3A">${this.killsByType.leech}</strong></div>
+      </div>
+    `;
     const deathHTML = `
       <div class="death-shell">
         <div class="death-title glitch-text">FLATLINED</div>
@@ -2464,6 +2493,9 @@ export class Game {
 
         <div class="death-divider">// LOADOUT //</div>
         <div class="death-weapons">${weaponsHtml || '<div class="death-empty">- none -</div>'}</div>
+
+        <div class="death-divider">// ENCOUNTERS //</div>
+        <div class="death-encounters">${encountersHtml}</div>
 
         <div class="death-divider">// SYNERGIES //</div>
         <div class="death-synergies">${synergiesHtml}</div>
@@ -3324,8 +3356,10 @@ export class Game {
         ? (e.shieldActive ? (e.protectedCol || '#2A9B5A') : e.col)
         : e.col;
       const col = e.hitFlash > 0 ? '#fff' : e.frozen ? (e.permafrost ? '#0044AA' : '#00CFFF') : e.stunned ? '#BF77FF' : e.slowT > 0 ? '#7ecfef' : baseCol;
-      ctx.fillStyle = col + 'bb';
-      ctx.strokeStyle = col;
+      const waveMod = Math.min(this.surgeCount * 8, 78);
+      const brightCol = brightenHexColor(col, waveMod);
+      ctx.fillStyle = brightCol + 'bb';
+      ctx.strokeStyle = brightCol;
       ctx.lineWidth = 1.5;
       traceEnemyShape(ctx, e);
       ctx.fill();
@@ -3404,15 +3438,18 @@ export class Game {
         ctx.stroke();
       }
       if (!perfMode || e.type === 'brute' || e.type === 'titan') {
-        const isTitan = e.type === 'titan';
-        const bw = isTitan ? e.r * 2.5 : e.r * 2 + 2;
-        const bh = isTitan ? 5 : 3;
-        const barX = isTitan ? e.x - bw * 0.5 : e.x - e.r - 1;
-        const barY = e.y - e.r - (isTitan ? 12 : 9);
-        ctx.fillStyle = '#111';
-        ctx.fillRect(barX, barY, bw, bh);
-        ctx.fillStyle = col;
-        ctx.fillRect(barX, barY, bw * Math.max(0, e.hp / e.maxHp), bh);
+        const shouldShowHpBar = e.hpBarVisT > 0 || e.type === 'brute' || e.type === 'titan';
+        if (shouldShowHpBar) {
+          const isTitan = e.type === 'titan';
+          const bw = isTitan ? e.r * 2.5 : e.r * 2 + 2;
+          const bh = isTitan ? 5 : 3;
+          const barX = isTitan ? e.x - bw * 0.5 : e.x - e.r - 1;
+          const barY = e.y - e.r - (isTitan ? 12 : 9);
+          ctx.fillStyle = '#111';
+          ctx.fillRect(barX, barY, bw, bh);
+          ctx.fillStyle = col;
+          ctx.fillRect(barX, barY, bw * Math.max(0, e.hp / e.maxHp), bh);
+        }
       }
 
       if (e.type === 'leech' && !e.shieldActive) {
