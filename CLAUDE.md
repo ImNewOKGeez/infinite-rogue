@@ -556,6 +556,7 @@ scripts/
 5. Keep moving gameplay systems toward easier future content addition.
 
 ## Changelog
+- 2026-04-13: Added XP gem magnetization animation with smooth scale-down and fade-out over 0.25s for snappy visual feedback during magnet pickup, and added persistent freeze/stun visual particle trails via cyan drifting frost particles (every 3 frames from frozen enemies) and violet pulsing stun particles (every 2 frames from stunned enemies) to improve late-game readability in high-density surge scenes.
 - 2026-04-13: Added visual hints (?) to empty weapon slots on HUD and death screen for discovery, and added run rating tiers (DEAD ON ARRIVAL / SURVIVOR / VETERAN / GHOST) to records screen based on survival time thresholds (< 2 min / < 4 min / < 6 min / 6+ min).
 - 2026-04-13: Added three QoL improvements: extended health bar visibility to 2 seconds after last hit, added wave-based enemy color brightening to show late-game enemies are stronger, and expanded death screen with enemy kill-type breakdown showing counts for runners, shooters, brutes, titans, juggernauts, and shield leeches.
 - 2026-04-13: Added three QoL UI improvements: current weapon loadout summary displayed above upgrade cards in the level-up overlay showing what weapons are equipped at each slot (or EMPTY), boss health bar now stays visible during phase transitions with a "TRANSITIONING" label and gold bar color instead of hiding, and enhanced upgrade-card stat previews to show "STARTS:" label for new weapon picks while maintaining current→new stat change display for upgrades.
