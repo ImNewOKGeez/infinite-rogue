@@ -6,7 +6,7 @@ import { EMP_SCALING, MOLOTOV_TIERS, WDEFS, bullets, resetBullets, resetPulseClu
 import { PASSIVES, buildPool, applyUpgrade, applyAscension } from './upgrades.js';
 import { particles, resetParticles, updateParticles, addRing, addBurst, addDot, addArc, drawParticles } from './particles.js';
 import { mkBoss, updateBoss, drawBoss, hitBoss, BOSS_SPAWN_TIME, BOSS_RESPAWN_DELAY } from './boss.js';
-import { SYNERGIES, getSave, recordDiscovery, recordRun } from './progression.js';
+import { SYNERGIES, getSave, recordDiscovery, recordRun, getRatingTier, RATING_COLORS } from './progression.js';
 import { WORLD_BOUNDARY_WARN, WORLD_H, WORLD_W } from './constants.js';
 import { ARC_BLADE_TIERS, getDiscAngle as getArcDiscAngle, quadPoint as quadBezierPoint } from './arcBlade.js';
 import { renderUpgradeCard as renderUpgradeCardView, formatRunTime as formatRunTimeView } from './gameUi.js';
@@ -2476,6 +2476,8 @@ export class Game {
         <div><span style="color:#888">SHIELD LEECHES</span><br><strong style="color:#1A6B3A">${this.killsByType.leech}</strong></div>
       </div>
     `;
+    const runRatingTier = getRatingTier(this.gt);
+    const runRatingColor = RATING_COLORS[runRatingTier];
     const deathHTML = `
       <div class="death-shell">
         <div class="death-title glitch-text">FLATLINED</div>
@@ -2485,6 +2487,7 @@ export class Game {
           <div class="death-stat">
             TIME &nbsp;
             <span class="${isNewTimeBest ? 'new-best' : ''}">${timeStr}</span>
+            <span style="color:${runRatingColor};font-size:10px;letter-spacing:1px;margin-left:8px">[${runRatingTier}]</span>
             ${isNewTimeBest ? '<span class="best-tag">★ BEST</span>' : ''}
             ${charBest?.bestTime ? `<span class="prev-best">PB ${formatRunTimeView(charBest.bestTime)}</span>` : ''}
           </div>
