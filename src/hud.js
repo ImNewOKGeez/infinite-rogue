@@ -7,16 +7,27 @@ export function initHUD() {
   const app = document.getElementById('app');
   app.innerHTML = `
     <div id="danger-vignette"></div>
+    <div id="low-health-vignette"></div>
     <div id="death-vignette"></div>
+    <div id="screen-transition"></div>
     <div id="damage-flash"></div>
     <div id="topbar">
+      <button id="pause-btn" class="pause-btn" style="display:none">⏸</button>
       <span class="stat" id="stat-hp">■ 100/100</span>
       <span class="stat" id="stat-time">0:00</span>
       <span class="stat" id="stat-info">LVL 1 · DODGE 20%</span>
     </div>
     <div id="hpbar-wrap"><div id="hpbar-damage" style="width:100%"></div><div id="hpbar-heal"></div><div id="hpbar" style="width:100%"></div></div>
     <div id="xpbar-wrap"><div id="xpbar"></div></div>
-    <div id="surge">!! SURGE !!</div>
+    <div id="surge-timer-wrap">
+      <div id="surge-timer-bar"></div>
+      <div id="surge-timer-label">SURGE</div>
+    </div>
+    <div id="pause-overlay">
+      <div class="pause-title">// PAUSED //</div>
+      <button class="menu-btn ui-btn-press" id="btn-resume">RESUME</button>
+      <button class="menu-btn ui-btn-press secondary" id="btn-quit-run">QUIT RUN</button>
+    </div>
     <div id="temp-banner" style="position:fixed;top:72px;left:50%;transform:translateX(-50%);z-index:25;opacity:0;pointer-events:none;font:700 12px Courier New, monospace;letter-spacing:3px;transition:opacity .2s ease;text-transform:uppercase"></div>
     <div id="bossbar-wrap">
       <div id="bossbar-label">◆ SIGNAL</div>
@@ -33,6 +44,7 @@ export function initHUD() {
       <div id="joystick"><div id="jknob"></div></div>
     </div>
     <button id="playtest-toggle" onclick="window.__game?.openPlaytestLab()" style="display:none">LAB</button>
+    <canvas id="menu-bg-canvas"></canvas>
     <div id="overlay"></div>`;
 }
 
@@ -62,6 +74,7 @@ export function updateHUD(P, gt, WDEFS) {
   const hpbar = document.getElementById('hpbar');
   const hpbarDamage = document.getElementById('hpbar-damage');
   const hpbarHeal = document.getElementById('hpbar-heal');
+  const lowHealthEl = document.getElementById('low-health-vignette');
   hpbar.style.width = (hpRatio * 100) + '%';
   hpbarDamage.style.width = (Math.max(0, P.hpLag) / P.maxHp * 100) + '%';
   hpbar.style.background = P.hp < P.maxHp * 0.3 ? '#E24B4A' : P.hp < P.maxHp * 0.6 ? '#FFB627' : '#1DFFD0';
@@ -73,7 +86,11 @@ export function updateHUD(P, gt, WDEFS) {
     hpbarHeal.style.opacity = `${Math.max(0, P.barrierHealT || 0)}`;
   }
   document.getElementById('damage-flash').style.opacity = Math.min(0.38, P.hurtFlash * 0.45);
-  document.getElementById('danger-vignette').style.opacity = hpRatio <= 0.3 ? `${0.18 + (0.3 - hpRatio) * 1.35}` : '0';
+  document.getElementById('danger-vignette').style.opacity = '0';
+  if (lowHealthEl) {
+    if (P.hp < P.maxHp * 0.3) lowHealthEl.classList.add('active');
+    else lowHealthEl.classList.remove('active');
+  }
   const m = Math.floor(gt / 60);
   const s = Math.floor(gt % 60);
   document.getElementById('stat-time').textContent = m + ':' + (s < 10 ? '0' : '') + s;
@@ -85,7 +102,9 @@ export function updateHUD(P, gt, WDEFS) {
     if (!el) continue;
     if (wids[i]) {
       const w = WDEFS[wids[i]];
-      const ascended = !!P.ascensions?.[wids[i]];
+      const wid = wids[i];
+      const ascended = !!P.ascensions?.[wid];
+      const weaponLevel = getWeaponLevel(P, wid);
       const isPulseOverload = wids[i] === 'pulse' && P.ascensions?.pulse === 'overload_round';
       const overloadCounter = isPulseOverload ? Math.max(0, Math.min(2, P._pulseOverloadCounter || 0)) : 0;
       const isGlacialLance = wids[i] === 'cryo' && P.ascensions?.cryo === 'glacial_lance';
@@ -96,9 +115,10 @@ export function updateHUD(P, gt, WDEFS) {
       const lanceGlow = isGlacialLance && lanceCounter === 2
         ? 'box-shadow:0 0 0 1px rgba(0,207,255,0.95), 0 0 14px rgba(0,207,255,0.55), inset 0 0 14px rgba(0,207,255,0.18);'
         : '';
-      const tierLabel = ascended
-        ? '<span style="color:#00CFFF">ASC</span>'
-        : `T${getWeaponLevel(P, wids[i])}`;
+      const dots = Array.from({ length: 5 }, (_, idx) => {
+        const filled = idx < weaponLevel;
+        return `<div class="wdot ${filled ? 'filled' : ''}" style="background:${filled ? w.col : '#222'};color:${filled ? w.col : '#222'}"></div>`;
+      }).join('');
       const overloadDots = isPulseOverload ? `
         <div style="display:flex;justify-content:center;gap:6px;margin-top:5px;min-height:8px">
           ${Array.from({ length: 3 }, (_, idx) => {
@@ -117,7 +137,13 @@ export function updateHUD(P, gt, WDEFS) {
       ` : '';
       el.className = 'ws on';
       el.style.cssText = overloadGlow || lanceGlow;
-      el.innerHTML = `<div class="wi" style="color:${w.col}">${w.icon}</div><div class="wn" style="color:${w.col}">${w.name}</div><div class="wt">${tierLabel}</div>${overloadDots}${lanceDots}`;
+      el.innerHTML = `
+        <div class="wi" style="color:${w.col}">${w.icon}</div>
+        <div class="wn" style="color:${w.col}">${w.name}</div>
+        ${ascended ? '<div class="wasc">ASC</div>' : `<div class="wdots">${dots}</div>`}
+        ${overloadDots}
+        ${lanceDots}
+      `;
     } else {
       el.className = 'ws';
       el.style.cssText = '';
@@ -140,7 +166,7 @@ export function hideOverlay() {
 }
 
 export function setSurge(visible) {
-  document.getElementById('surge').style.opacity = visible ? '1' : '0';
+  void visible;
 }
 
 export function setBossBar(boss) {

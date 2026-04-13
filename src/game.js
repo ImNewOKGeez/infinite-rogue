@@ -6,7 +6,7 @@ import { ASCENSIONS, EMP_SCALING, MOLOTOV_TIERS, WDEFS, bullets, resetBullets, r
 import { PASSIVES, buildPool, applyUpgrade, applyAscension } from './upgrades.js';
 import { particles, resetParticles, updateParticles, addRing, addBurst, addDot, addArc, drawParticles } from './particles.js';
 import { mkBoss, updateBoss, drawBoss, hitBoss, BOSS_SPAWN_TIME, BOSS_RESPAWN_DELAY } from './boss.js';
-import { SYNERGIES, recordDiscovery, recordRun } from './progression.js';
+import { SYNERGIES, getSave, recordDiscovery, recordRun } from './progression.js';
 import { WORLD_BOUNDARY_WARN, WORLD_H, WORLD_W } from './constants.js';
 import {
   initAudio, resumeAudio,
@@ -14,6 +14,7 @@ import {
   playCryoFire, playCryoStormSound, playGlacialLanceSound, playPulseFire, playCascadeSound, playTriplePulseSound, playArcSound,
   playArcBladeSound, playArcBladeReturnSound,
   playMolotovThrowSound, playMolotovLandSound,
+  playBarrierAbsorbSound,
   playNovaDetonationSound,
   playFrenzySound,
   playHit, playEnemyDeath, playPlayerHit, playDodge,
@@ -80,6 +81,140 @@ function hexToRgba(hex, alpha = 1) {
   return `rgba(${r},${g},${b},${alpha})`;
 }
 
+class MenuBackground {
+  constructor(canvas) {
+    this.canvas = canvas;
+    this.ctx = canvas.getContext('2d');
+    this.nodes = [];
+    this.connections = [];
+    this.packets = [];
+    this.running = false;
+    this.animFrame = null;
+    this.gt = 0;
+    this.lastTime = 0;
+    this._onResize = () => this.resize();
+    this.init();
+  }
+
+  resize() {
+    this.canvas.width = window.innerWidth;
+    this.canvas.height = window.innerHeight;
+  }
+
+  init() {
+    this.resize();
+    window.addEventListener('resize', this._onResize);
+    const count = 80;
+    this.nodes = Array.from({ length: count }, () => ({
+      x: Math.random() * this.canvas.width,
+      y: Math.random() * this.canvas.height,
+      pulses: Math.random() < 0.25,
+      pulseOffset: Math.random() * Math.PI * 2,
+      r: 2.5 + Math.random() * 1.5,
+      vx: (Math.random() - 0.5) * 4,
+      vy: (Math.random() - 0.5) * 4,
+    }));
+
+    this.connections = [];
+    this.nodes.forEach((a, i) => {
+      const distances = this.nodes
+        .map((b, j) => ({ j, d: Math.hypot(b.x - a.x, b.y - a.y) }))
+        .filter(({ j, d }) => j !== i && d < 200)
+        .sort((lhs, rhs) => lhs.d - rhs.d)
+        .slice(0, 3);
+      distances.forEach(({ j }) => {
+        if (!this.connections.find(c => (c.a === i && c.b === j) || (c.a === j && c.b === i))) {
+          this.connections.push({ a: i, b: j });
+        }
+      });
+    });
+
+    for (let i = 0; i < 5; i++) this.spawnPacket();
+  }
+
+  spawnPacket() {
+    if (!this.connections.length) return;
+    const connIdx = Math.floor(Math.random() * this.connections.length);
+    this.packets.push({ connIdx, t: 0, speed: 0.008 + Math.random() * 0.012 });
+  }
+
+  start() {
+    if (this.running) return;
+    this.running = true;
+    this.canvas.classList.add('visible');
+    this.lastTime = performance.now();
+    this.loop(this.lastTime);
+  }
+
+  stop() {
+    this.running = false;
+    this.canvas.classList.remove('visible');
+    if (this.animFrame) cancelAnimationFrame(this.animFrame);
+    this.animFrame = null;
+  }
+
+  loop(ts) {
+    if (!this.running) return;
+    const dt = Math.min((ts - this.lastTime) / 1000, 0.05);
+    this.lastTime = ts;
+    this.gt += dt;
+    this.update(dt);
+    this.draw();
+    this.animFrame = requestAnimationFrame(next => this.loop(next));
+  }
+
+  update(dt) {
+    this.nodes.forEach(node => {
+      node.x += node.vx * dt;
+      node.y += node.vy * dt;
+      if (node.x < 0 || node.x > this.canvas.width) node.vx *= -1;
+      if (node.y < 0 || node.y > this.canvas.height) node.vy *= -1;
+      node.x = cl(node.x, 0, this.canvas.width);
+      node.y = cl(node.y, 0, this.canvas.height);
+    });
+
+    this.packets.forEach(packet => { packet.t += packet.speed; });
+    this.packets = this.packets.filter(packet => packet.t < 1);
+    while (this.packets.length < 5) this.spawnPacket();
+  }
+
+  draw() {
+    const { ctx, canvas, gt } = this;
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+    ctx.strokeStyle = 'rgba(0,207,255,0.06)';
+    ctx.lineWidth = 1;
+    this.connections.forEach(connection => {
+      const a = this.nodes[connection.a];
+      const b = this.nodes[connection.b];
+      ctx.beginPath();
+      ctx.moveTo(a.x, a.y);
+      ctx.lineTo(b.x, b.y);
+      ctx.stroke();
+    });
+
+    this.nodes.forEach(node => {
+      const pulse = node.pulses ? 0.8 + 0.2 * Math.sin(gt * 1.5 + node.pulseOffset) : 1;
+      ctx.fillStyle = 'rgba(0,207,255,0.15)';
+      ctx.beginPath();
+      ctx.arc(node.x, node.y, node.r * pulse, 0, Math.PI * 2);
+      ctx.fill();
+    });
+
+    this.packets.forEach(packet => {
+      const connection = this.connections[packet.connIdx];
+      if (!connection) return;
+      const a = this.nodes[connection.a];
+      const b = this.nodes[connection.b];
+      const x = a.x + (b.x - a.x) * packet.t;
+      const y = a.y + (b.y - a.y) * packet.t;
+      ctx.fillStyle = 'rgba(0,207,255,0.4)';
+      ctx.beginPath();
+      ctx.arc(x, y, 2.5, 0, Math.PI * 2);
+      ctx.fill();
+    });
+  }
+}
+
 export class Game {
   constructor() {
     this.P = null;
@@ -140,10 +275,14 @@ export class Game {
     this._bossShockwave = null;
     this._screenFlash = null;
     this._cryoStormSoundPlayedThisFrame = false;
+    this._barrierRipple = null;
+    this.menuBg = null;
   }
 
   start() {
     initHUD();
+    this.initPause();
+    this.menuBg = new MenuBackground(document.getElementById('menu-bg-canvas'));
     this.canvas = document.getElementById('c');
     this.ctx = this.canvas.getContext('2d');
     this.resize();
@@ -167,8 +306,54 @@ export class Game {
       if (document.getElementById('overlay')?.style.display === 'flex') return;
       this.openPlaytestLab();
     });
+    window.addEventListener('keydown', e => {
+      if (e.key !== 'Escape' || !this.running) return;
+      this.togglePause();
+    });
     window.__game = this;
     this.showStart();
+  }
+
+  initPause() {
+    document.getElementById('pause-btn')?.addEventListener('click', () => {
+      if (!this.running) return;
+      this.togglePause();
+    });
+    document.getElementById('btn-resume')?.addEventListener('click', () => {
+      this.togglePause();
+    });
+    document.getElementById('btn-quit-run')?.addEventListener('click', () => {
+      this.unpause();
+      this.endGame();
+    });
+  }
+
+  togglePause() {
+    if (!this.running) return;
+    const overlay = document.getElementById('pause-overlay');
+    const btn = document.getElementById('pause-btn');
+    const appOverlay = document.getElementById('overlay');
+    const pauseVisible = !!overlay?.classList.contains('visible');
+    const blockingOverlayVisible = appOverlay?.style.display === 'flex';
+    if (blockingOverlayVisible && !pauseVisible) return;
+
+    this.paused = !this.paused;
+    if (this.paused) {
+      overlay?.classList.add('visible');
+      if (btn) btn.textContent = '▶';
+      playUIClick();
+      return;
+    }
+    this.unpause();
+    playUIClick();
+  }
+
+  unpause() {
+    this.paused = false;
+    document.getElementById('pause-overlay')?.classList.remove('visible');
+    const btn = document.getElementById('pause-btn');
+    if (btn) btn.textContent = '⏸';
+    this.lt = performance.now();
   }
 
   resize() {
@@ -234,6 +419,7 @@ export class Game {
     this._bossShockwave = null;
     this._screenFlash = null;
     this._cryoStormSoundPlayedThisFrame = false;
+    this._barrierRipple = null;
     this.P = mkPlayer(this.W, this.H, char);
     this.P._pulseMines = [];
     this.P._pulseOverloadCounter = 0;
@@ -260,11 +446,16 @@ export class Game {
     this.shake.mag = 22;
     this.running = true;
     this.paused = false;
+    this.menuBg?.stop();
+    document.getElementById('low-health-vignette')?.classList.remove('active');
     document.getElementById('death-vignette')?.classList.remove('active');
+    document.getElementById('screen-transition')?.classList.remove('fade-in');
     this.setPlaytestToggleVisible(this.playtestMode);
     clearExtraTarget();
     setBossBar(null);
     hideOverlay();
+    this.unpause();
+    document.getElementById('pause-btn')?.style.setProperty('display', 'block');
     this.updateCamera();
     this.lt = performance.now();
     requestAnimationFrame(ts => this.loop(ts));
@@ -300,7 +491,7 @@ export class Game {
       this._showNextDiscoveryPause();
       return;
     }
-    if (this.running) this.paused = false;
+    if (this.running) this.unpause();
   }
 
   loop(ts) {
@@ -445,7 +636,36 @@ export class Game {
     this.dmgNums = this.dmgNums.filter(d => { d.y -= 40 * dt; d.life -= dt; return d.life > 0; });
     this.updateCamera();
     updateHUD(P, this.gt, WDEFS);
+    this.updateSurgeTimer();
     setBossBar(this.boss);
+  }
+
+  updateSurgeTimer() {
+    const wrap = document.getElementById('surge-timer-wrap');
+    const bar = document.getElementById('surge-timer-bar');
+    const label = document.getElementById('surge-timer-label');
+    if (!wrap || !bar || !label) return;
+
+    if (this.surgeActive) {
+      wrap.classList.add('active');
+      wrap.classList.remove('warning');
+      bar.style.width = '100%';
+      bar.style.background = '#E24B4A';
+      bar.style.opacity = String(0.5 + 0.5 * Math.sin(this.gt * 6));
+      label.style.color = '#E24B4A';
+      label.textContent = 'SURGE ACTIVE';
+      return;
+    }
+
+    const timeSinceLastSurge = this.gt % 40;
+    const progress = timeSinceLastSurge / 40;
+    wrap.classList.remove('active');
+    wrap.classList.toggle('warning', progress > 0.8);
+    bar.style.width = (progress * 100) + '%';
+    bar.style.background = progress > 0.8 ? '#E24B4A' : '#8a2b2a';
+    bar.style.opacity = '1';
+    label.style.color = progress > 0.8 ? '#E24B4A' : '#8a2b2a';
+    label.textContent = 'SURGE';
   }
 
   setShake(duration, mag = 22) {
@@ -466,8 +686,14 @@ export class Game {
     P.hp -= remainingDamage;
     P.invT = 0.6;
     P.hurtFlash = 1;
+    this._screenFlash = { col: '#FFFFFF', alpha: 0.35, life: 0.18, maxLife: 0.18 };
     P.hpLag = Math.max(P.hpLag, P.hp + remainingDamage);
     this.setShake(shakeDur, shakeMag);
+    const hpbar = document.getElementById('hpbar');
+    if (hpbar) {
+      hpbar.classList.add('damage-flash');
+      setTimeout(() => hpbar.classList.remove('damage-flash'), 80);
+    }
     playPlayerHit();
     if (P.hp <= 0) { P.hp = 0; this.endGame(); }
     return true;
@@ -479,10 +705,13 @@ export class Game {
     const absorbed = Math.min(damage, P._shieldCap || 0);
     P._shieldCap = Math.max(0, (P._shieldCap || 0) - absorbed);
     P._shieldAbsorbedCycle = (P._shieldAbsorbedCycle || 0) + absorbed;
-    P._shieldHitT = 0.2;
+    P._shieldHitT = 0.32;
     if (absorbed > 0) {
-      addBurst(P.x, P.y, '#C6FF00', 6, 80, 2.8, 0.18);
-      addRing(P.x, P.y, P.r + 11, '#FFFFFF', 2, 0.12);
+      this._barrierRipple = { life: 0.42, maxLife: 0.42 };
+      addBurst(P.x, P.y, '#C6FF00', 10, 110, 3.6, 0.24);
+      addRing(P.x, P.y, P.r + 11, '#FFFFFF', 3, 0.16);
+      addRing(P.x, P.y, P.r + 15, '#C6FF00', 2.5, 0.2);
+      playBarrierAbsorbSound();
     }
     if (P._shieldCap <= 0 && P._shieldActive) {
       const tier = WDEFS.barrier.tiers[Math.min(getWeaponLevel(P, 'barrier'), 5)];
@@ -2269,6 +2498,7 @@ export class Game {
   }
 
   levelUp() {
+    this.unpause();
     this.paused = true;
     playLevelUp();
     playUIOpen();
@@ -2286,48 +2516,55 @@ export class Game {
     playUISelect();
     const cards = document.querySelectorAll('.uc');
     cards.forEach(card => {
+      const cardId = card.dataset.upgradeId;
       card.classList.remove('selected', 'dismissed');
-      if (card === pickedCard) card.classList.add('selected');
+      if ((pickedCard && card === pickedCard) || cardId === id) card.classList.add('selected');
       else card.classList.add('dismissed');
     });
 
-    const finalizePick = () => {
-      if (id.startsWith('asc_')) {
-        const wid = id.slice(4);
-        const ascensionOptions = this.currentUpgradePool.find(option => option.id === id)?.options || [];
-        if (ascensionOptions.length) {
-          this._screenFlash = { col: '#FFFFFF', alpha: 0.6, life: 0.3 };
-          setTimeout(() => {
-            showAscensionDraft(wid, ascensionOptions, (ascensionId, pickedAscensionCard) => {
-              this.pickAscension(wid, ascensionId, pickedAscensionCard);
-            });
-            playAscensionOpen();
-          }, 200);
-          return;
-        }
+    if (id.startsWith('asc_')) {
+      const wid = id.slice(4);
+      const ascensionOptions = this.currentUpgradePool.find(option => option.id === id)?.options || [];
+      if (ascensionOptions.length) {
+        this._screenFlash = { col: '#FFFFFF', alpha: 0.6, life: 0.3 };
+        setTimeout(() => {
+          showAscensionDraft(wid, ascensionOptions, (ascensionId, pickedAscensionCard) => {
+            this.pickAscension(wid, ascensionId, pickedAscensionCard);
+          });
+          playAscensionOpen();
+        }, 120);
+        return;
       }
-      applyUpgrade(id, this.P);
-      this.currentUpgradePool = [];
-      hideOverlay();
-      this.paused = false;
-      if (this.P.xp >= this.P.xpNext) { const v = this.P.xp; this.P.xp = 0; this.addXp(v); }
-    };
+    }
+
+    applyUpgrade(id, this.P);
+    this.currentUpgradePool = [];
+    this.unpause();
+    if (this.P.xp >= this.P.xpNext) { const v = this.P.xp; this.P.xp = 0; this.addXp(v); }
 
     setTimeout(() => {
       const overlay = document.getElementById('overlay');
-      if (overlay) overlay.style.animation = 'fadeOut 0.15s ease forwards';
-      setTimeout(() => {
-        if (overlay) overlay.style.animation = '';
-        finalizePick();
-      }, 150);
-    }, 220);
+      if (overlay) {
+        overlay.style.opacity = '0';
+        overlay.style.transition = 'opacity 0.15s ease';
+        setTimeout(() => {
+          hideOverlay();
+          overlay.style.opacity = '';
+          overlay.style.transition = '';
+        }, 150);
+      }
+    }, 120);
   }
 
   endGame() {
     this.running = false;
+    this.unpause();
+    this.paused = true;
     this.setPlaytestToggleVisible(false);
+    document.getElementById('pause-btn')?.style.setProperty('display', 'none');
     stopBossMusic();
-    document.getElementById('death-vignette')?.classList.add('active');
+    this._screenFlash = { col: '#FFFFFF', alpha: 0.8, life: 0.15, maxLife: 0.15 };
+    this.shake.t = 0.5;
     playDeathSound();
     const recordSummary = recordRun(this.P.char, {
       time: this.gt,
@@ -2339,10 +2576,23 @@ export class Game {
       ...recordSummary.newCharBests,
     ]);
     const char = CHARACTERS[this.P.char] || this.getSelectedCharacter();
+    const save = getSave();
+    const charBest = save?.personalBests?.perCharacter?.[this.P.char];
+    const isNewTimeBest = bestFields.has('bestTime');
+    const isNewKillBest = bestFields.has('mostKills');
+    const timeStr = formatRunTime(this.gt);
+    const surgeCount = this.surgeCount;
     const weaponsHtml = getOwnedWeaponIds(this.P)
       .map(id => {
         const weapon = WDEFS[id];
-        return `<div class="death-list-line"><span style="color:${weapon.col}">${weapon.icon} ${weapon.name}</span><strong>T${getWeaponLevel(this.P, id)}</strong></div>`;
+        const lvl = getWeaponLevel(this.P, id);
+        const asc = this.P.ascensions?.[id];
+        const dots = '●'.repeat(lvl) + '○'.repeat(5 - lvl);
+        return `<div class="death-weapon-row">
+          <span style="color:${weapon.col}">${weapon.icon} ${weapon.name}</span>
+          <span class="death-weapon-dots" style="color:${weapon.col}">${dots}</span>
+          ${asc ? `<span class="death-asc-tag">ASC: ${asc.toUpperCase().replace(/_/g, ' ')}</span>` : ''}
+        </div>`;
       })
       .join('');
     const synergiesHtml = this.runDiscoveries.size
@@ -2357,42 +2607,53 @@ export class Game {
       : '<div class="death-empty">- none -</div>';
     const deathHTML = `
       <div class="death-shell">
-        <div class="ov-title glitch-text" style="color:#E24B4A;font-size:22px">FLATLINED</div>
-        <div class="death-char" style="color:${char.col}">${char.name}</div>
-        <div class="death-section">
-          <div class="panel-label">RUN STATS</div>
-          <div class="death-stats">
-            <div class="death-stat"><div class="death-list-line"><span>OPERATOR</span><strong>${char.name}</strong></div></div>
-            <div class="death-stat"><div class="death-list-line"><span>TIME SURVIVED</span><strong>${formatRunTime(this.gt)}${renderBestMark(bestFields, 'bestTime')}</strong></div></div>
-            <div class="death-stat"><div class="death-list-line"><span>KILLS</span><strong>${this.killCount}${renderBestMark(bestFields, 'mostKills')}</strong></div></div>
-            <div class="death-stat"><div class="death-list-line"><span>LEVEL REACHED</span><strong>${this.P.level}${renderBestMark(bestFields, 'highestLevel')}</strong></div></div>
-            <div class="death-stat"><div class="death-list-line"><span>SYNERGIES FOUND</span><strong>${this.runDiscoveries.size}</strong></div></div>
+        <div class="death-title glitch-text">FLATLINED</div>
+        <div class="death-char-name" style="color:${char.col}">${char.name}</div>
+
+        <div class="death-stats-wrap">
+          <div class="death-stat">
+            TIME &nbsp;
+            <span class="${isNewTimeBest ? 'new-best' : ''}">${timeStr}</span>
+            ${isNewTimeBest ? '<span class="best-tag">★ BEST</span>' : ''}
+            ${charBest?.bestTime ? `<span class="prev-best">PB ${formatRunTime(charBest.bestTime)}</span>` : ''}
           </div>
+          <div class="death-stat">
+            KILLS &nbsp;
+            <span class="${isNewKillBest ? 'new-best' : ''}">${this.killCount}</span>
+            ${isNewKillBest ? '<span class="best-tag">★ BEST</span>' : ''}
+            ${charBest?.mostKills ? `<span class="prev-best">PB ${charBest.mostKills}</span>` : ''}
+          </div>
+          <div class="death-stat">LEVEL &nbsp;<span>${this.P.level}</span></div>
+          <div class="death-stat">WAVE &nbsp;<span>${surgeCount}</span></div>
         </div>
-        <div class="death-section">
-          <div class="panel-label">WEAPONS EQUIPPED</div>
-          <div class="death-stats">${weaponsHtml}</div>
-        </div>
-        <div class="death-section">
-          <div class="panel-label">SYNERGIES THIS RUN</div>
-          <div class="death-stats">${synergiesHtml}</div>
-        </div>
+
+        <div class="death-divider">// LOADOUT //</div>
+        <div class="death-weapons">${weaponsHtml || '<div class="death-empty">- none -</div>'}</div>
+
+        <div class="death-divider">// SYNERGIES //</div>
+        <div class="death-synergies">${synergiesHtml}</div>
+
         <div class="death-buttons menu-actions">
           <button class="btn ui-btn-press" onclick="window.__game.restartAfterDeath()">${this.playtestMode ? 'RESTART TEST' : 'RUN AGAIN'}</button>
-          <button class="btn btn-secondary ui-btn-press" onclick="window.__game.returnToMenuFromOverlay()">MENU</button>
+          <button class="btn btn-secondary ui-btn-press" onclick="window.__game.returnToMenu()">MENU</button>
         </div>
       </div>
       `;
     setTimeout(() => {
+      document.getElementById('death-vignette')?.classList.add('active');
+    }, 150);
+    setTimeout(() => {
       showOverlay(deathHTML, 'death-screen');
-    }, 400);
+    }, 600);
   }
 
   showMainMenu() {
     this.running = false;
-    this.paused = false;
+    this.unpause();
     this.setPlaytestToggleVisible(false);
+    document.getElementById('pause-btn')?.style.setProperty('display', 'none');
     stopBossMusic();
+    this.menuBg?.start();
     const selectedId = this.menuSelectedCharId;
     const char = selectedId ? CHARACTERS[selectedId] : null;
     const cards = Object.values(CHARACTERS).map(c => {
@@ -2435,23 +2696,26 @@ export class Game {
     }).join('');
     showOverlay(`
       <div class="menu-shell">
-        <div class="menu-brand compact">
-          <div class="menu-kicker">NEURAL SURVIVAL ROGUELITE</div>
-          <div class="menu-title anim-slide-down">INFINITE ROGUE</div>
-          <div class="menu-sub">// choose an operator and jack in //</div>
-        </div>
-        <section class="menu-panel menu-panel-operators">
-          <div class="menu-panel-head">
-            <div class="panel-label">OPERATORS</div>
-            <button class="menu-link-btn ui-btn-press" onclick="window.__game.openRecordsFromMenu()">RECORDS</button>
+        <div id="menu-splash">
+          <div id="menu-title-wrap">
+            <div id="menu-title-line1">INFINITE</div>
+            <div id="menu-title-line2">ROGUE</div>
+            <div id="menu-tagline">// cyberpunk survivor //</div>
           </div>
-          <div class="char-grid compact">${cards}</div>
-        </section>
-        <div class="menu-footer">
-          <button id="start-btn" class="btn menu-start-btn ui-btn-press${char ? ' visible' : ''}" onclick="window.__game.startSelectedCharacter()">JACK IN</button>
-          <button class="menu-link-btn ui-btn-press" onclick="window.__game.openPlaytestLabFromMenu()">PLAYTEST LAB</button>
+          <div id="menu-options">
+            <button class="menu-btn ui-btn-press" id="btn-start-game" onclick="window.__game.openCharacterSelectFromMenu()">START GAME</button>
+            <button class="menu-btn ui-btn-press secondary" id="btn-records" onclick="window.__game.openRecordsFromMenu()">RECORDS</button>
+            <button class="menu-btn ui-btn-press lab" id="btn-lab" onclick="window.__game.openPlaytestLabFromMenu()">// PLAYTEST LAB //</button>
+          </div>
+        </div>
+        <div id="menu-charselect">
+          <div class="menu-back-btn ui-btn-press" id="btn-back" onclick="window.__game.backToMenuSplash()">← BACK</div>
+          <div class="menu-section-title">SELECT OPERATIVE</div>
+          <div id="char-cards-wrap">${this.renderCharacterSelectCards()}</div>
+          <button class="menu-btn ui-btn-press" id="start-btn" onclick="window.__game.jackIn()">JACK IN</button>
         </div>
       </div>`, 'main-menu');
+    this.syncCharacterSelectUI();
   }
 
   showStart() {
@@ -2463,7 +2727,7 @@ export class Game {
   }
 
   openRecordsFromMenu() {
-    playUIClick();
+    playUIOpen();
     this.openRecords();
   }
 
@@ -2472,10 +2736,106 @@ export class Game {
     this.openPlaytestLab();
   }
 
-  startSelectedCharacter() {
+  renderCharacterSelectCards() {
+    return Object.values(CHARACTERS).map(c => {
+      const weapon = WDEFS[c.startWeapon];
+      const passiveCopy = c.id === 'ghost'
+        ? '20% dodge chance. Freeze setups and kite hard.'
+        : c.id === 'bruiser'
+          ? '+35% damage under 50% HP. Heavy close-range pressure.'
+          : 'Stunned enemies drop extra XP. Fast snowball control.';
+      const passiveLabel = c.id === 'ghost'
+        ? 'GHOST STEP'
+        : c.id === 'bruiser'
+          ? 'LOW HP RAMP'
+          : 'DATA LEECH';
+      const passiveValue = c.id === 'ghost'
+        ? '20% dodge chance'
+        : c.id === 'bruiser'
+          ? '+35% damage below 50% HP'
+          : '2x XP from stunned kills';
+      return `<button class="char-card ui-btn-press" data-char-id="${c.id}" onclick="window.__game.selectCharacter('${c.id}')">
+        <div class="char-card-top">
+          <span class="char-sigil" style="color:${c.col}">◆</span>
+          <span class="char-name">${c.name}</span>
+          <span class="char-tag">READY</span>
+        </div>
+        <div class="char-compact-row">
+          <span class="char-weapon" style="color:${weapon.col}">${weapon.icon} ${weapon.name}</span>
+          <span class="char-speed">SPD ${c.spd}</span>
+        </div>
+        <div class="char-inline-meta">
+          <div class="char-inline-line"><span>PASSIVE</span><strong>${passiveLabel}</strong></div>
+          <div class="char-inline-line"><span>EFFECT</span><strong>${passiveValue}</strong></div>
+          <div class="char-inline-copy">${passiveCopy}</div>
+        </div>
+      </button>`;
+    }).join('');
+  }
+
+  syncCharacterSelectUI() {
+    const selectedId = this.menuSelectedCharId;
+    document.querySelectorAll('.char-card').forEach(card => {
+      const id = card.dataset.charId;
+      const tag = card.querySelector('.char-tag');
+      card.classList.remove('selected', 'unselected');
+      if (!selectedId) {
+        if (tag) tag.textContent = 'READY';
+        return;
+      }
+      if (id === selectedId) {
+        card.classList.add('selected');
+        if (tag) tag.textContent = 'SELECTED';
+      } else {
+        card.classList.add('unselected');
+        if (tag) tag.textContent = 'READY';
+      }
+    });
+    const btn = document.getElementById('start-btn');
+    if (btn) btn.classList.toggle('visible', !!selectedId);
+  }
+
+  openCharacterSelectFromMenu() {
+    playUIOpen();
+    const splash = document.getElementById('menu-splash');
+    const charselect = document.getElementById('menu-charselect');
+    if (!splash || !charselect) return;
+    splash.style.animation = 'fadeOut 0.2s ease forwards';
+    setTimeout(() => {
+      splash.style.display = 'none';
+      splash.style.animation = '';
+      charselect.style.display = 'flex';
+      charselect.style.animation = 'fadeIn 0.25s ease forwards';
+      this.syncCharacterSelectUI();
+    }, 200);
+  }
+
+  backToMenuSplash() {
+    playUIClose();
+    const splash = document.getElementById('menu-splash');
+    const charselect = document.getElementById('menu-charselect');
+    if (!splash || !charselect) return;
+    charselect.style.animation = 'fadeOut 0.2s ease forwards';
+    setTimeout(() => {
+      charselect.style.display = 'none';
+      charselect.style.animation = '';
+      splash.style.display = 'flex';
+      splash.style.animation = 'fadeIn 0.25s ease forwards';
+    }, 200);
+  }
+
+  jackIn() {
     if (!this.menuSelectedCharId) return;
     playUIClick();
-    this.newRun(this.getSelectedCharacter());
+    const transition = document.getElementById('screen-transition');
+    transition?.classList.add('fade-in');
+    setTimeout(() => {
+      hideOverlay();
+      this.newRun(this.getSelectedCharacter());
+      setTimeout(() => {
+        transition?.classList.remove('fade-in');
+      }, 100);
+    }, 350);
   }
 
   restartAfterDeath() {
@@ -2489,17 +2849,23 @@ export class Game {
     this.showMainMenu();
   }
 
+  returnToMenu() {
+    this.running = false;
+    hideOverlay();
+    this.showMainMenu();
+  }
+
   getSelectedCharacter() {
     return CHARACTERS[this.selectedCharId] || CHARACTERS.ghost;
   }
 
   selectCharacter(id) {
     if (!CHARACTERS[id]) return;
-    playUISelect();
     this.selectedCharId = id;
     this.menuSelectedCharId = id;
     this.playtestBuild = sanitizePlaytestBuild(this.playtestBuild, CHARACTERS[id]);
-    this.showStart();
+    this.syncCharacterSelectUI();
+    playUISelect();
   }
 
   setPlaytestToggleVisible(visible) {
@@ -3590,6 +3956,29 @@ export class Game {
     ctx.stroke();
     ctx.shadowBlur = 0;
 
+    if (this._barrierRipple) {
+      this._barrierRipple.life -= this.dt;
+      const progress = 1 - this._barrierRipple.life / this._barrierRipple.maxLife;
+      const rippleR = P.r + 8 + progress * 28;
+      const alpha = (1 - progress) * 0.95;
+      ctx.globalAlpha = alpha;
+      ctx.strokeStyle = '#C6FF00';
+      ctx.lineWidth = 3;
+      ctx.shadowColor = '#C6FF00';
+      ctx.shadowBlur = 12;
+      ctx.beginPath();
+      ctx.arc(P.x, P.y, rippleR, 0, Math.PI * 2);
+      ctx.stroke();
+      ctx.strokeStyle = '#FFFFFF';
+      ctx.lineWidth = 1.5;
+      ctx.beginPath();
+      ctx.arc(P.x, P.y, rippleR - 5, 0, Math.PI * 2);
+      ctx.stroke();
+      ctx.shadowBlur = 0;
+      ctx.globalAlpha = 1;
+      if (this._barrierRipple.life <= 0) this._barrierRipple = null;
+    }
+
     if (!getWeaponLevel(P, 'barrier')) return;
     const baseRadius = P.r + 9;
     if (P._shieldFlashT > 0) {
@@ -3939,6 +4328,7 @@ function wStats(wid, lvl, p) {
   const rb = p.rateBonus || 1;
   const empScaling = EMP_SCALING[Math.min(Math.max(lvl, 1), 5)] || EMP_SCALING[1];
   const molotovTier = MOLOTOV_TIERS[Math.min(Math.max(lvl, 1), 5)] || MOLOTOV_TIERS[1];
+  const arcTier = ARC_BLADE_TIERS[Math.min(Math.max(lvl, 1), 5)] || ARC_BLADE_TIERS[1];
   const rates = {
     cryo: (1.9 + lvl * 0.35) * rb,
     pulse: 0.45 * rb,
@@ -3946,6 +4336,7 @@ function wStats(wid, lvl, p) {
     swarm: 0,
     molotov: 1 / (molotovTier.fireRate * (1 / rb)),
     barrier: 0,
+    arcblade: 0,
   };
   const r = (rates[wid] || 0).toFixed(1);
   if (wid === 'cryo') return [`Rate: ${r}/s`, `Projectiles: ${Math.min(5, Math.max(1, lvl))}`, lvl >= 2 ? 'Spread: widening fan' : 'Slow: 50% for 2s', 'Pierce: 1 enemy'];
@@ -3956,6 +4347,14 @@ function wStats(wid, lvl, p) {
   if (wid === 'barrier') {
     const tier = WDEFS.barrier.tiers[Math.min(lvl, 5)];
     return [`Rate: ${r}/s`, `Absorb: ${tier.maxCap} dmg`, `Active: ${tier.activeDuration}s`, `Recharge: ${tier.rechargeTime}s`];
+  }
+  if (wid === 'arcblade') {
+    return [
+      `Blades: ${arcTier.discCount}`,
+      `Orbit: ${arcTier.rx}x${arcTier.ry}`,
+      `Spin: ${arcTier.thetaSpeed.toFixed(1)}`,
+      `Dmg mult: x${arcTier.dmgMult.toFixed(1)}`
+    ];
   }
   return [];
 }
@@ -4003,6 +4402,13 @@ function wDesc(wid, lvl) {
       3: 'Absorbs 95 damage per cycle. Active 5.9s, recharge 6s.',
       4: 'Absorbs 130 damage per cycle. Active 6.8s, recharge 5s.',
       5: 'Absorbs 175 damage per cycle. Active 8.5s, recharge 4s.'
+    },
+    arcblade: {
+      1: 'Throws a single orbiting boomerang blade that loops out and back around the player.',
+      2: 'The blade travels in a wider orbit and hits harder on each pass.',
+      3: 'Adds a second boomerang blade for mirrored orbit pressure.',
+      4: 'Both blades widen their orbit and gain more hit strength.',
+      5: 'Adds a third blade and reaches the weapon’s fullest orbiting coverage.'
     }
   }[wid] || {})[lvl] || '';
 }
@@ -4011,7 +4417,7 @@ function renderUpgradeCard(u, p, onClick) {
   if (u.type === 'ascension') {
     const w = WDEFS[u.wid];
     const optionNames = (u.options || []).map(option => option.name).join(' · ');
-    return `<div class="uc wep" tabindex="0" onclick="${onClick}" style="border:1px solid rgba(0,207,255,0.85);box-shadow:0 0 0 2px rgba(0,207,255,0.18), inset 0 0 0 1px rgba(255,255,255,0.08);background:linear-gradient(180deg, rgba(5,14,20,0.98), rgba(11,19,28,0.98))">
+    return `<div class="uc wep" data-upgrade-id="${u.id}" tabindex="0" onclick="${onClick}" style="border:1px solid rgba(0,207,255,0.85);box-shadow:0 0 0 2px rgba(0,207,255,0.18), inset 0 0 0 1px rgba(255,255,255,0.08);background:linear-gradient(180deg, rgba(5,14,20,0.98), rgba(11,19,28,0.98))">
       <div class="ut" style="color:#00CFFF">ASCENSION</div>
       <div class="un" style="color:${w.col}">${w.icon} ${w.name}</div>
       <div class="ud">THIS L5 WEAPON CAN TRANSFORM</div>
@@ -4019,20 +4425,48 @@ function renderUpgradeCard(u, p, onClick) {
   }
   if (u.type === 'wep') {
     const w = WDEFS[u.wid];
-    const stats = wStats(u.wid, u.lvl, p);
+    const currentLvl = getWeaponLevel(p, u.wid) || 0;
+    const currentStats = currentLvl > 0 ? wStats(u.wid, currentLvl, p) : null;
+    const newStats = wStats(u.wid, u.lvl, p);
+    const statsHTML = newStats.map((stat, i) => {
+      const current = currentStats?.[i];
+      if (current && current !== stat) {
+        return `<div class="stat-change">
+          <span class="stat-old">${current}</span>
+          <span class="stat-arrow">→</span>
+          <span class="stat-new">${stat}</span>
+        </div>`;
+      }
+      return `<div class="stat-new-only">${stat}</div>`;
+    }).join('');
     const subLine = u.isNew ? `UNLOCKS WEAPON ${w.name}` : `UPGRADES ${w.name} TO T${u.lvl}`;
-    const detailLines = [u.isNew ? weaponUnlockDesc(u.wid) : wDesc(u.wid, u.lvl), ...stats].filter(Boolean);
-    return `<div class="uc wep" tabindex="0" onclick="${onClick}">
+    const detailLines = [u.isNew ? weaponUnlockDesc(u.wid) : wDesc(u.wid, u.lvl)].filter(Boolean);
+    return `<div class="uc wep" data-upgrade-id="${u.id}" tabindex="0" onclick="${onClick}">
       <div class="ut">WEAPON</div>
       <div class="un">${w.icon} ${w.name} T${u.lvl}</div>
       <div class="ud">${subLine}</div>
-      <div class="us">${detailLines.join('<br>')}</div></div>`;
+      <div class="us">${statsHTML}${detailLines.map(line => `<div class="stat-copy">${line}</div>`).join('')}</div></div>`;
   }
   const preview = u.apply ? (() => { const c = { ...p }; return u.apply(c); })() : [];
-  return `<div class="uc pas" tabindex="0" onclick="${onClick}">
+  return `<div class="uc pas" data-upgrade-id="${u.id}" tabindex="0" onclick="${onClick}">
     <div class="ut">PASSIVE UPGRADE</div>
     <div class="un">${passiveHeadline(u.id)}</div>
-    <div class="us">${preview.join('<br>')}</div></div>`;
+    <div class="us">${formatPreviewLines(preview)}</div></div>`;
+}
+
+function formatPreviewLines(lines) {
+  return (lines || []).map(line => {
+    if (typeof line !== 'string') return '';
+    const parts = line.split(' -> ');
+    if (parts.length === 2) {
+      return `<div class="stat-change">
+        <span class="stat-old">${parts[0]}</span>
+        <span class="stat-arrow">→</span>
+        <span class="stat-new">${parts[1]}</span>
+      </div>`;
+    }
+    return `<div class="stat-new-only">${line}</div>`;
+  }).join('');
 }
 
 function weaponUnlockDesc(wid) {

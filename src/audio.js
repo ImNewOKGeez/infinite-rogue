@@ -291,6 +291,12 @@ export function playMolotovLandSound() {
   noiseShot(0.08, 0.002, 0.12, 'highpass', 1800, 1.5);
 }
 
+export function playBarrierAbsorbSound() {
+  osc('triangle', 170, 0.24, 0.0015, 0.12, 120);
+  osc('sine', 110, 0.12, 0.0015, 0.1, 85);
+  noiseShot(0.09, 0.001, 0.08, 'bandpass', 700, 1.2);
+}
+
 export function playNovaDetonationSound() {
   const ctx = getAudioCtx();
   const t = n();

@@ -138,7 +138,8 @@ Broad by intent. The game should be readable for casual players and strategicall
 ## Current implementation snapshot
 
 ### Built now
-- Main menu overlay with character selection, records access, active-loadout presentation, and staged entrance/selection polish.
+- Main menu overlay with a two-screen flow: animated splash/title screen, records plus restored playtest-lab entry point, separate character-select screen, JACK IN screen-transition handoff into gameplay, and a drifting animated network background behind the overlay.
+- In-run pause system with an always-visible HUD pause button during active runs, desktop `Escape` toggle support, and a dedicated pause overlay with resume and quit-run actions.
 - Canvas-based core gameplay loop with keyboard plus virtual joystick support.
 - Scrolling `3000 x 3000` world with player-follow camera, world-edge clamping, and boundary-pressure feedback.
 - Three playable characters: Ghost, Bruiser, Hacker.
@@ -151,12 +152,14 @@ Broad by intent. The game should be readable for casual players and strategicall
 - Six live enemy types in the normal pool: Runner, Shooter, Brute, Titan, Juggernaut, and Shield Leech.
 - Recurring three-phase boss with warning, intro, boss bar, phase announcements, and post-kill reward draft.
 - Level-up-pool weapon Ascension draft injection for eligible level-5 weapons, with live pools for Cryo, Pulse, EMP, Swarm, Arc Blade, and Molotov.
-- Death screen with run stats, equipped weapons, and run synergies.
+- Death screen with expanded run summary: time and kill PB comparison, level, surge wave reached, full loadout rows with level dots and Ascension tags, run synergies, and direct menu return.
 - Save-backed records screen with global and per-character bests.
 - Persistent synergy discovery tracking with first-discovery pause overlay.
 - Procedural audio for weapons, hits, XP, surges, boss warning/phases/death, boss music, plus dedicated UI open/close/click/select/ascension/death stingers.
-- Shared UI polish system for main menu, level-up, death, records, discovery, and Ascension overlays using CSS transitions/keyframes, staggered card entrances, button press feedback, red death vignette lead-in, and Ascension screen flash/shimmer beats.
-- Stronger damage feedback including screen flash, low-health vignette, HP lag bar, and barrier-heal HP bar segment.
+- Shared UI polish system for main menu, level-up, death, records, discovery, and Ascension overlays using CSS transitions/keyframes, button press feedback, a dedicated JACK IN screen-transition layer, a menu-background animation system, red death vignette lead-in, low-health pulsing vignette feedback, and Ascension screen flash/shimmer beats.
+- HUD weapon slots now show per-weapon level dots in the weapon colour and swap to an `ASC` tag when that weapon is Ascended.
+- HUD includes a surge timer warning strip beneath the XP bar that fills over the 40-second cadence, pulses red near surge, and stays visibly active during surge windows.
+- Stronger damage feedback including screen flash, low-health vignette, HP lag bar, barrier-heal HP bar segment, and Barrier absorb hit feedback via ripple plus dedicated absorb audio.
 - Cryo freeze buildup is live with per-enemy freeze meters, thaw cooldowns, frost visuals, thaw burst feedback, upgraded Cryo Storm/Nova/Permafrost readability, Glacial Lance charge-and-release behavior, and Frost Field's slow-first aura with minimal chip damage.
 - Playtest lab overlay with instant weapon/passive tier editing, ascension selection, world/camera debug readouts, time skip controls, instant loadout injection, and one-click late-game/boss/max-weapon presets.
 - Capacitor configuration plus committed Android project are live in-repo.
@@ -287,6 +290,7 @@ The live weapon system is simple and numeric right now:
 - Level 4: absorb 130, active 6.8s, recharge 5s.
 - Level 5: absorb 175, active 8.5s, recharge 4s.
 - When the shield cycle ends or breaks, the player heals for absorbed damage, capped at 40% of missing HP for that cycle.
+- Barrier absorbs now trigger a clearer lime hit burst/ripple and a distinct low shield-thud audio cue before the shield actually breaks.
 
 ## Current passive upgrades
 | ID | Label | Live effect |
@@ -411,7 +415,7 @@ The live weapon system is simple and numeric right now:
 - Weapon / enemy helpers: `tripleWaves`, `pendingCascades`, `slowFields`, `pendingExplosions`, `_activeShields`
 - Camera / background: `camX`, `camY`, `bgNodes`, `bgConnections`, `bgPackets`
 - Player-owned runtime resets on `newRun()`: `P._arcDiscs`, `P._sawBlade`, `P._pulseMines`, `P._pulseOverloadCounter`, `P._lanceCounter`, `P._novaDrones`, `P._splitDrones`, `P._dr`
-- Feedback / overlays: `shake`, `runDiscoveries`, `runNewDiscoveries`, `discoveryPauseQueue`, `discoveryPauseActive`, `shatterBursts`, `overloadFlash`, `chainFlash`, `novaFlashT`, `novaImpactFlashes`, `_screenFlash`, `_cryoStormSoundPlayedThisFrame`
+- Feedback / overlays: `shake`, `runDiscoveries`, `runNewDiscoveries`, `discoveryPauseQueue`, `discoveryPauseActive`, `shatterBursts`, `overloadFlash`, `chainFlash`, `novaFlashT`, `novaImpactFlashes`, `_screenFlash`, `_cryoStormSoundPlayedThisFrame`, `_barrierRipple`
 
 ### Live behavior
 - Boss is a large signal construct with aimed volleys, radial rings, contact damage, and escalating movement pressure.
@@ -469,17 +473,17 @@ src/
   main.js        - app entry, loads save and starts Game
   constants.js   - world dimensions and boundary-warning constants
   progression.js - save schema, records, synergy persistence
-  game.js        - core loop, world camera, menus, overlays, playtest lab, run flow, combat orchestration, and Molotov runtime (`updateMolotov`, `throwMolotov`, `landMolotov`, `createFirePool`, `drawMolotov`)
+  game.js        - core loop, world camera, menus, menu-background animation, overlays, playtest lab, run flow, combat orchestration, and Molotov runtime (`updateMolotov`, `throwMolotov`, `landMolotov`, `createFirePool`, `drawMolotov`)
   player.js      - character roster, player factory, weapon-state helpers
   weapons.js     - weapon defs, bullets, ascension defs, cryo ascension hooks, pulse clusters, and shield logic hooks
   enemies.js     - enemy roster, surge-based spawn logic, targeting/status helpers, freeze-state updates, and freeze spread
   upgrades.js    - passive defs, upgrade pool generation, Ascension card injection, `applyUpgrade`, and `applyAscension`
   boss.js        - boss creation, update logic, rendering, phase behavior
   particles.js   - particles and combat feedback primitives, including run-start resets
-  hud.js         - HUD DOM creation, overlay helpers, temporary warning banners, and Ascension/records/discovery overlay markup
+  hud.js         - HUD DOM creation, overlay helpers, temporary warning banners, and shared overlay elements including death/low-health/transition layers plus Ascension/records/discovery markup
   input.js       - keyboard and virtual joystick
   audio.js       - procedural gameplay/UI SFX and boss music helpers
-  style.css      - all HUD/menu/overlay styling plus shared UI animation classes/keyframes
+  style.css      - all HUD/menu/overlay styling plus shared UI animation classes/keyframes, menu-flow styling, and damage/low-health feedback layers
 ```
 
 ## Technical conventions
@@ -537,6 +541,9 @@ src/
 5. Keep moving gameplay systems toward easier future content addition.
 
 ## Changelog
+- 2026-04-13: Added six QoL readability upgrades across the run HUD and overlays: an in-run pause button plus pause overlay and `Escape` toggle, weapon-slot level dots with `ASC` replacement, a more threatening surge timer strip, clearer Barrier absorb hit ripple/audio feedback, an expanded death summary with PB comparison/loadout/wave readout and direct menu return, and upgrade-card current-to-next stat previews; updated the brief to match.
+- 2026-04-13: Restored the small splash-screen `// PLAYTEST LAB //` entry to the main menu and added a dedicated animated menu-background canvas with drifting cyan network nodes, live connection packets, and menu-aware start/stop lifecycle so the background runs behind menu overlays and shuts off when gameplay begins.
+- 2026-04-13: Refined the new UI polish pass by converting the menu into a two-screen splash-plus-character-select flow, keeping character-card clicks DOM-only with no overlay rebuild, adding the JACK IN blackout transition layer, making normal level-up picks resume gameplay immediately while the overlay fades out, upgrading death with a freeze-frame flash/shake/vignette sequence and larger FLATLINED treatment, and strengthening damage readability with brighter player-hit screen flash, HP-bar flash, and a pulsing low-health vignette.
 - 2026-04-13: Added a shared UI polish layer across the main menu, level-up draft, death screen, records/discovery overlays, and Ascension draft: dedicated UI sound exports (`playUIClick`, `playUIOpen`, `playUIClose`, `playUISelect`, `playDeathSound`, `playAscensionOpen`), reusable fade/slide/glitch/shimmer/pulse CSS animation classes, main-menu character selection transitions with staged JACK IN reveal, level-up pick exit choreography, death vignette plus staggered FLATLINED presentation, Ascension flash/shimmer/fade-to-black sequencing, and global overlay button press feedback.
 - 2026-04-13: Fixed Molotov's same-frame processing bug by marking newly created main, bounce, cluster, and Inferno bottles as `justCreated` and skipping their first update pass, preventing frame-spike drops while keeping T3/T5 multi-bottle throws and follow-up bottles stable.
 - 2026-04-12: Tuned Molotov follow-up spacing so Bouncing Cocktail now creates three uniform 85px pools across wider 140/120/100px hops, widened Cluster Molotov sub-bottle landing spread to 150-210px, and tightened the sector-throw fallback so multi-bottle tiers always launch their full bottle count even into empty sectors.
