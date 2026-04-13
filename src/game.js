@@ -8,7 +8,7 @@ import { particles, resetParticles, updateParticles, addRing, addBurst, addDot, 
 import { mkBoss, updateBoss, drawBoss, hitBoss, BOSS_SPAWN_TIME, BOSS_RESPAWN_DELAY } from './boss.js';
 import { SYNERGIES, getSave, recordDiscovery, recordRun, getRatingTier, RATING_COLORS } from './progression.js';
 import { WORLD_BOUNDARY_WARN, WORLD_H, WORLD_W } from './constants.js';
-import { ARC_BLADE_TIERS, getDiscAngle as getArcDiscAngle, quadPoint as quadBezierPoint } from './arcBlade.js';
+import { ARC_BLADE_TIERS, quadPoint as quadBezierPoint } from './arcBlade.js';
 import { renderUpgradeCard as renderUpgradeCardView, formatRunTime as formatRunTimeView } from './gameUi.js';
 import { MenuBackground } from './menuBackground.js';
 import {
@@ -29,7 +29,7 @@ import {
   initAudio, resumeAudio,
   playEMPSound,
   playCryoFire, playCryoStormSound, playGlacialLanceSound, playPulseFire, playCascadeSound, playTriplePulseSound, playArcSound,
-  playArcBladeSound, playArcBladeReturnSound,
+  playArcBladeSound,
   playMolotovThrowSound, playMolotovLandSound,
   playBarrierAbsorbSound,
   playNovaDetonationSound,
@@ -736,29 +736,24 @@ export class Game {
     });
   }
 
-  launchDisc(discIndex, throwAngle) {
+  launchDisc(discIndex, startAngle) {
     const P = this.P;
     const tier = ARC_BLADE_TIERS[getWeaponLevel(P, 'arcblade')];
     if (!tier) return;
 
-    const cx = P.x + Math.cos(throwAngle) * tier.rx;
-    const cy = P.y + Math.sin(throwAngle) * tier.rx;
+    const orbitR = tier.rx;
     const disc = {
-      rx: tier.rx,
-      ry: tier.ry,
-      theta: Math.PI,
+      orbitR,
+      theta: startAngle,
       thetaSpeed: tier.thetaSpeed,
-      throwAngle,
-      cx,
-      cy,
       rotation: 0,
       dmg: P.dmg * tier.dmgMult * 15,
       pierce: tier.pierce,
       hitEnemies: new Set(),
       discIndex,
       isSplit: false,
-      x: P.x,
-      y: P.y,
+      x: P.x + Math.cos(startAngle) * orbitR,
+      y: P.y + Math.sin(startAngle) * orbitR,
       trail: [],
     };
 
@@ -791,15 +786,11 @@ export class Game {
       return;
     }
 
-    const target = nearest(P);
-    const baseAngle = target
-      ? Math.atan2(target.y - P.y, target.x - P.x)
-      : 0;
     for (let i = 0; i < tier.discCount; i++) {
       const active = P._arcDiscs.filter(disc => disc.discIndex === i);
       if (active.length === 0) {
-        const throwAngle = getArcDiscAngle(i, tier.discCount, baseAngle);
-        this.launchDisc(i, throwAngle);
+        const startAngle = (i / tier.discCount) * Math.PI * 2;
+        this.launchDisc(i, startAngle);
       }
     }
 
@@ -807,42 +798,29 @@ export class Game {
       disc.theta += disc.thetaSpeed * dt;
       disc.rotation += dt * 8;
 
-      disc.cx = this.P.x + Math.cos(disc.throwAngle) * disc.rx;
-      disc.cy = this.P.y + Math.sin(disc.throwAngle) * disc.rx;
-      const cosA = Math.cos(disc.throwAngle);
-      const sinA = Math.sin(disc.throwAngle);
-      const localX = Math.cos(disc.theta) * disc.rx;
-      const localY = Math.sin(disc.theta) * disc.ry;
-      disc.x = disc.cx + localX * cosA - localY * sinA;
-      disc.y = disc.cy + localX * sinA + localY * cosA;
+      const orbitCos = Math.cos(disc.theta);
+      const orbitSin = Math.sin(disc.theta);
+      disc.x = this.P.x + orbitCos * disc.orbitR;
+      disc.y = this.P.y + orbitSin * disc.orbitR;
       disc.trail ||= [];
       disc.trail.push({ x: disc.x, y: disc.y });
       if (disc.trail.length > 6) disc.trail.shift();
 
-      if (!disc._passedPeak && disc.theta >= Math.PI * 2) {
-        disc._passedPeak = true;
+      if (disc.theta >= Math.PI * 2) {
+        disc.theta -= Math.PI * 2;
         disc.hitEnemies.clear();
       }
 
-      if (disc.theta >= Math.PI * 3) {
-        playArcBladeReturnSound();
-        return false;
-      }
-
-      let stopOnHit = false;
       enemies.forEach(e => {
-        if (stopOnHit) return;
         if (disc.hitEnemies.has(e)) return;
         const d = Math.hypot(e.x - disc.x, e.y - disc.y);
         if (d < e.r + 10) {
           disc.hitEnemies.add(e);
           this.hitEnemy(e, disc.dmg, '#FF2D9B');
-
-          if (!disc.pierce) stopOnHit = true;
         }
       });
       pruneEnemies();
-      return !stopOnHit;
+      return true;
     });
   }
 
@@ -898,9 +876,9 @@ export class Game {
       pool.dmgTimer = (pool.dmgTimer || 0) - dt;
       if (pool.dmgTimer <= 0) {
         pool.dmgTimer = 0.1;
-        const dmg = P.dmg * pool.dmgMult * 0.1;
         enemies.forEach(e => {
           if (Math.hypot(e.x - pool.x, e.y - pool.y) < pool.r + e.r) {
+            const dmg = P.dmg * pool.dmgMult * 0.1;
             this.hitEnemy(e, dmg, '#FF2D9B');
           }
         });
@@ -1421,6 +1399,7 @@ export class Game {
       (target, splash, col) => this.hitEnemy(target, splash, col),
       (splash, col) => this._doBossHit(splash, col)
     );
+
   }
 
   handlePulseClusterExplosion(cluster) {
@@ -1571,6 +1550,10 @@ export class Game {
 
   updateBossShockwave(dt) {
     if (!this._bossShockwave) return;
+    if ((!this.boss || !this.boss.alive) && this._bossShockwave.phase === 'telegraph') {
+      this._bossShockwave = null;
+      return;
+    }
     const sw = this._bossShockwave;
 
     if (sw.phase === 'telegraph') {
@@ -1991,7 +1974,7 @@ export class Game {
             const cryoStormBlocked = this._tryCryoStormHit(b, e);
             let dmg = b.dmg;
             if (b.meta?.type === 'pulse') dmg = getPulseHitDamage(b, dmg);
-            if (!cryoStormBlocked) this.hitEnemy(e, dmg, b.col, false);
+            if (!cryoStormBlocked) this.hitEnemy(e, dmg, b.col, false, null, false, true);
             if (b.meta?.type === 'cryo') handleCryoImpact(this, b, e, e.x, e.y, false);
             if (b.meta?.type === 'pulse') {
               this.handlePulseImpact(b, e.x, e.y);
@@ -2205,16 +2188,17 @@ export class Game {
     this.addDN(leech.x, leech.y - leech.r - 10, 'SHIELD BROKEN', '#44FF88', 1.1, true);
   }
 
-  hitEnemy(e, dmg, col, isSynergy = false, minHpFloor = null, silent = false) {
+  hitEnemy(e, dmg, col, isSynergy = false, minHpFloor = null, silent = false, directHit = false) {
     if (this.P.char === 'bruiser' && this.P.hp < this.P.maxHp * 0.5) dmg *= 1.35;
     if (this._maybeApplyShatter(e)) dmg = 0;
 
     if (e.type === 'leech' && e.shieldActive) {
-      e.shieldHp -= dmg;
+      const shieldDmg = directHit ? dmg * 2 : dmg;
+      e.shieldHp -= shieldDmg;
       e.hitFlash = 0.1;
       e.hpBarVisT = 2.0;
       if (!silent) addBurst(e.x, e.y, e.shieldCol || '#44FF88', isSynergy ? 6 : 3, isSynergy ? 90 : 60, 2.5, 0.32);
-      if (!silent && dmg > 0) this.addDN(e.x, e.y - e.r, Math.round(dmg), e.shieldCol || '#44FF88', 0.7, isSynergy);
+      if (!silent && shieldDmg > 0) this.addDN(e.x, e.y - e.r, Math.round(shieldDmg), e.shieldCol || '#44FF88', 0.7, isSynergy);
       if (!silent) {
         const now = performance.now();
         if (now - this._lastHitSound > 80) { playHit(isSynergy); this._lastHitSound = now; }
@@ -3586,19 +3570,22 @@ export class Game {
     enemies
       .filter(e => e.type === 'leech' && e.shieldActive)
       .forEach(leech => {
-        const shieldAlpha = 0.15 + 0.08 * Math.sin(this.gt * 2 + leech.x);
         const shieldFraction = Math.max(0, leech.shieldHp / Math.max(1, leech.maxShieldHp));
+        const lowShield = shieldFraction < 0.3;
+        const flicker = lowShield ? 0.08 + 0.06 * Math.sin(this.gt * 18) : 0;
+        const shieldAlpha = 0.15 + 0.08 * Math.sin(this.gt * 2 + leech.x) + flicker;
+        const shieldCol = lowShield ? '#FF4444' : '#44FF88';
 
         ctx.globalAlpha = shieldAlpha;
-        ctx.fillStyle = '#44FF88';
+        ctx.fillStyle = shieldCol;
         ctx.beginPath();
         ctx.arc(leech.x, leech.y, leech.shieldR, 0, Math.PI * 2);
         ctx.fill();
 
         ctx.globalAlpha = 0.5;
-        ctx.strokeStyle = '#44FF88';
+        ctx.strokeStyle = shieldCol;
         ctx.lineWidth = 2;
-        ctx.shadowColor = '#44FF88';
+        ctx.shadowColor = shieldCol;
         ctx.shadowBlur = 8;
         ctx.beginPath();
         ctx.arc(leech.x, leech.y, leech.shieldR, 0, Math.PI * 2);
@@ -3606,7 +3593,7 @@ export class Game {
         ctx.shadowBlur = 0;
 
         ctx.globalAlpha = 0.8;
-        ctx.strokeStyle = '#AAFFCC';
+        ctx.strokeStyle = lowShield ? '#FFAAAA' : '#AAFFCC';
         ctx.lineWidth = 3;
         ctx.beginPath();
         ctx.arc(
@@ -4269,4 +4256,3 @@ export class Game {
 }
 
 function cl(v, a, b) { return Math.max(a, Math.min(b, v)); }
-

@@ -62,7 +62,7 @@ const PHASE_TUNING = {
 export function mkBoss(gt, player, viewH, worldW = WORLD_W, worldH = WORLD_H) {
   const cycleScale = 1 + Math.floor(gt / 180) * 0.25;
   const baseHp = Math.round(BASE_HP * cycleScale);
-  const hpScale = 1 + gt / 80;
+  const hpScale = 1 + gt / 75 + (gt / 240) ** 2;
   const scaledHp = Math.round(baseHp * hpScale);
   const margin = 34 + 8;
   const spawnDist = viewH * 0.4;

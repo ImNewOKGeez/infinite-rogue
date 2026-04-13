@@ -150,11 +150,29 @@ export function getEnemyType(surgeCount, roll) {
     return 'juggernaut';
   }
 
-  if (roll < 0.28) return 'runner';
-  if (roll < 0.46) return 'shooter';
-  if (roll < 0.60) return 'brute';
-  if (roll < 0.72) return 'titan';
-  if (roll < 0.84) return 'juggernaut';
+  if (surgeCount <= 6) {
+    if (roll < 0.24) return 'runner';
+    if (roll < 0.41) return 'shooter';
+    if (roll < 0.55) return 'brute';
+    if (roll < 0.71) return 'titan';
+    if (roll < 0.86) return 'juggernaut';
+    return 'leech';
+  }
+
+  if (surgeCount <= 8) {
+    if (roll < 0.18) return 'runner';
+    if (roll < 0.32) return 'shooter';
+    if (roll < 0.45) return 'brute';
+    if (roll < 0.65) return 'titan';
+    if (roll < 0.83) return 'juggernaut';
+    return 'leech';
+  }
+
+  if (roll < 0.12) return 'runner';
+  if (roll < 0.24) return 'shooter';
+  if (roll < 0.35) return 'brute';
+  if (roll < 0.58) return 'titan';
+  if (roll < 0.79) return 'juggernaut';
   return 'leech';
 }
 
