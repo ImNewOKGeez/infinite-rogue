@@ -7,11 +7,14 @@
 - If a requested change conflicts with this document in a meaningful way, pause and flag it before overwriting the rule.
 - If at any point the user is required to do any of the following please inform them at the end of your message.
 EVERY UPDATE:
-1. npm run build
-2. Drag dist/ → Netlify
-3. npx cap sync
-4. Play in Android Studio
-5. commit git
+1. npm run lint
+2. npm run check
+3. npm run build
+4. npm run verify
+5. Drag dist/ -> Netlify
+6. npx cap sync
+7. Play in Android Studio
+8. commit git
 
 # Infinite Rogue - Project Operating Brief
 
@@ -163,6 +166,9 @@ Broad by intent. The game should be readable for casual players and strategicall
 - Cryo freeze buildup is live with per-enemy freeze meters, thaw cooldowns, frost visuals, thaw burst feedback, upgraded Cryo Storm/Nova/Permafrost readability, Glacial Lance charge-and-release behavior, and Frost Field's slow-first aura with minimal chip damage.
 - Playtest lab overlay with instant weapon/passive tier editing, ascension selection, world/camera debug readouts, time skip controls, instant loadout injection, and one-click late-game/boss/max-weapon presets.
 - Capacitor configuration plus committed Android project are live in-repo.
+- Web build now uses relative asset paths plus a wired PWA manifest/icon set so the same `dist/` works for Netlify drag-drop and Capacitor sync.
+- Shared UI, playtest, menu-background, Arc Blade, and render helpers are now split into dedicated modules (`gameUi.js`, `playtest.js`, `menuBackground.js`, `arcBlade.js`, `renderUtils.js`) so `game.js` carries less duplicate view/helper code.
+- Repo verification now has a three-step local pass: `npm run check`, `npm run build`, then `npm run verify` to validate built manifest and asset links.
 
 ### Built but still likely to change
 - Weapon tuning and upgrade text.
@@ -174,7 +180,7 @@ Broad by intent. The game should be readable for casual players and strategicall
 ### Not built yet
 - Character unlock flow.
 - Additional characters beyond the current three.
-- Additional weapons beyond the current six.
+- Additional weapons beyond the current seven.
 - A fuller codex/planning layer on top of records and discoveries.
 - Store prep and shipping polish beyond the current Capacitor/Android setup.
 - Analytics or crash reporting.
@@ -473,7 +479,7 @@ src/
   main.js        - app entry, loads save and starts Game
   constants.js   - world dimensions and boundary-warning constants
   progression.js - save schema, records, synergy persistence
-  game.js        - core loop, world camera, menus, menu-background animation, overlays, playtest lab, run flow, combat orchestration, and Molotov runtime (`updateMolotov`, `throwMolotov`, `landMolotov`, `createFirePool`, `drawMolotov`)
+  game.js        - core loop, world camera, menus, run flow, combat orchestration, and Molotov runtime (`updateMolotov`, `throwMolotov`, `landMolotov`, `createFirePool`, `drawMolotov`)
   player.js      - character roster, player factory, weapon-state helpers
   weapons.js     - weapon defs, bullets, ascension defs, cryo ascension hooks, pulse clusters, and shield logic hooks
   enemies.js     - enemy roster, surge-based spawn logic, targeting/status helpers, freeze-state updates, and freeze spread
@@ -483,7 +489,16 @@ src/
   hud.js         - HUD DOM creation, overlay helpers, temporary warning banners, and shared overlay elements including death/low-health/transition layers plus Ascension/records/discovery markup
   input.js       - keyboard and virtual joystick
   audio.js       - procedural gameplay/UI SFX and boss music helpers
+  gameUi.js      - weapon/passive card rendering, stat-preview formatting, and run-summary text helpers
+  playtest.js    - playtest build sanitizing, preview player assembly, lab rendering, presets, and lab input config
+  menuBackground.js - animated menu-canvas node network with lifecycle helpers
+  arcBlade.js    - Arc Blade tier table plus shared orbit/curve math helpers
+  renderUtils.js - shared enemy-shape tracing and hex-to-rgba helpers
   style.css      - all HUD/menu/overlay styling plus shared UI animation classes/keyframes, menu-flow styling, and damage/low-health feedback layers
+
+scripts/
+  check.mjs      - source/manifest sanity checks for local assets and wired metadata
+  verify-dist.mjs - built `dist/` manifest and relative asset-path verification
 ```
 
 ## Technical conventions
@@ -541,6 +556,10 @@ src/
 5. Keep moving gameplay systems toward easier future content addition.
 
 ## Changelog
+- 2026-04-13: Added three QoL UI improvements: current weapon loadout summary displayed above upgrade cards in the level-up overlay showing what weapons are equipped at each slot (or EMPTY), boss health bar now stays visible during phase transitions with a "TRANSITIONING" label and gold bar color instead of hiding, and enhanced upgrade-card stat previews to show "STARTS:" label for new weapon picks while maintaining current→new stat change display for upgrades.
+- 2026-04-13: Added ESLint quality gate (`npm run lint`, now step 1 of the update checklist): flat config with browser/node globals, no-undef as errors, no-unused-vars as warnings, and catch/eqeqeq/no-console rules; cleaned up all lint findings including three dead imports in `game.js` (`getEffectiveFreezeThreshold`, `ASCENSIONS`, `playDeath`), two dead destructure variables (`W` in `update` and `_updateBoss`), the dead `newlyStunned` EMP block, a 40-line dead `cards` computation in `showMainMenu`, a dead `getPulseMaxClusterGeneration` function in `weapons.js`, and unused catch bindings in `audio.js` and `progression.js`.
+- 2026-04-13: Continued the cleanup/future-proofing pass by extracting shared UI/playtest/menu-background/render/Arc Blade helpers out of `game.js`, removing the stale duplicate helper block left behind there, replacing the upgrade-pool shuffle anti-pattern with Fisher-Yates, fixing playtest Cryo ascension previews so they no longer mutate live bullets, adding source/dist verification scripts, and updating this brief plus the update checklist to match.
+- 2026-04-13: Cleaned up deployment and documentation drift by switching Vite to relative asset paths, wiring the favicon plus PWA manifest to shipped webp icons, removing a stale no-op surge HUD helper and an unused public icon sprite, correcting the live Inferno/Frost Field copy, and fixing the stale "current six weapons" brief note.
 - 2026-04-13: Added six QoL readability upgrades across the run HUD and overlays: an in-run pause button plus pause overlay and `Escape` toggle, weapon-slot level dots with `ASC` replacement, a more threatening surge timer strip, clearer Barrier absorb hit ripple/audio feedback, an expanded death summary with PB comparison/loadout/wave readout and direct menu return, and upgrade-card current-to-next stat previews; updated the brief to match.
 - 2026-04-13: Restored the small splash-screen `// PLAYTEST LAB //` entry to the main menu and added a dedicated animated menu-background canvas with drifting cyan network nodes, live connection packets, and menu-aware start/stop lifecycle so the background runs behind menu overlays and shuts off when gameplay begins.
 - 2026-04-13: Refined the new UI polish pass by converting the menu into a two-screen splash-plus-character-select flow, keeping character-card clicks DOM-only with no overlay rebuild, adding the JACK IN blackout transition layer, making normal level-up picks resume gameplay immediately while the overlay fades out, upgrading death with a freeze-frame flash/shake/vignette sequence and larger FLATLINED treatment, and strengthening damage readability with brighter player-hit screen flash, HP-bar flash, and a pulsing low-health vignette.
@@ -575,3 +594,4 @@ src/
 - 2026-04-09: Added `progression.js` with persistent personal bests, synergy discovery tracking, first-discovery reveal/audio, a records screen, and death-screen run record reporting.
 - 2026-04-09: Reworked the live boss into a longer three-phase encounter with higher durability, circling movement, telegraphed transitions, charge follow-ups, spiral pressure, late-fight barrages/mines, stronger boss-bar state feedback, and updated boss announcements.
 - 2026-04-08: Rolled live Cryo back from the experimental path/tree direction to the simpler level-based weapon model.
+

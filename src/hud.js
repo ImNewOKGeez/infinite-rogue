@@ -165,25 +165,43 @@ export function hideOverlay() {
   ov.className = '';
 }
 
-export function setSurge(visible) {
-  void visible;
-}
-
 export function setBossBar(boss) {
   const wrap = document.getElementById('bossbar-wrap');
-  if (!boss || !boss.alive) {
+  if (!boss) {
     wrap.style.display = 'none';
     return;
   }
+
+  // Keep bar visible during transitions, even if boss is not alive
+  const isTransitioning = boss.transitionT > 0;
+  if (!boss.alive && !isTransitioning) {
+    wrap.style.display = 'none';
+    return;
+  }
+
   wrap.style.display = 'flex';
   const bar = document.getElementById('bossbar');
   const pct = Math.max(0, boss.hp / boss.maxHp * 100);
   bar.style.width = pct + '%';
-  const col = boss.phase === 3 ? '#8A2BE2' : boss.phase === 2 ? '#D4537E' : '#E24B4A';
+
+  // Determine bar color based on phase or transition state
+  let col;
+  if (isTransitioning) {
+    col = '#FFD700'; // Gold for transition
+  } else {
+    col = boss.phase === 3 ? '#8A2BE2' : boss.phase === 2 ? '#D4537E' : '#E24B4A';
+  }
   bar.style.background = col;
+
   const label = document.getElementById('bossbar-label');
   label.style.color = col;
-  label.textContent = boss.phase === 3 ? '◆ SIGNAL // OVERCLOCK' : boss.phase === 2 ? '◆ SIGNAL // ENRAGED' : '◆ SIGNAL';
+
+  // Update label based on transition or phase state
+  if (isTransitioning) {
+    label.textContent = '◆ SIGNAL // TRANSITIONING';
+  } else {
+    label.textContent = boss.phase === 3 ? '◆ SIGNAL // OVERCLOCK' : boss.phase === 2 ? '◆ SIGNAL // ENRAGED' : '◆ SIGNAL';
+  }
 }
 
 export function showDiscoveryOverlay(synergy, onContinue) {

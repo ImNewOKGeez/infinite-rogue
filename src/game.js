@@ -1,13 +1,30 @@
-import { initHUD, updateHUD, showOverlay, hideOverlay, setSurge, setBossBar, showDiscoveryOverlay, showRecordsScreen, showAscensionDraft } from './hud.js';
+import { initHUD, updateHUD, showOverlay, hideOverlay, setBossBar, showDiscoveryOverlay, showRecordsScreen, showAscensionDraft } from './hud.js';
 import { initInput, initJoystick, jDir } from './input.js';
 import { CHARACTERS, addWeapon, getAscension, getOwnedWeaponIds, getWeaponLevel, hasAscension, mkPlayer, mkWeaponState } from './player.js';
-import { enemies, resetEnemies, spawnEnemy, pruneEnemies, dist2, nearest, setExtraTarget, clearExtraTarget, tickEnemyStatus, updateEnemyFreezeState, applyStun, applySlow, applyKnockback, getEffectiveFreezeThreshold } from './enemies.js';
-import { ASCENSIONS, EMP_SCALING, MOLOTOV_TIERS, WDEFS, bullets, resetBullets, resetPulseClusters, handleCryoImpact, updateCryoFields, getPulseHitDamage, triggerPulseExplosion, spawnBullet, applyFreezeMeter, spawnPulseClusters } from './weapons.js';
+import { enemies, resetEnemies, spawnEnemy, pruneEnemies, dist2, nearest, setExtraTarget, clearExtraTarget, tickEnemyStatus, updateEnemyFreezeState, applyStun, applySlow, applyKnockback } from './enemies.js';
+import { EMP_SCALING, MOLOTOV_TIERS, WDEFS, bullets, resetBullets, resetPulseClusters, handleCryoImpact, updateCryoFields, getPulseHitDamage, triggerPulseExplosion, spawnBullet, applyFreezeMeter, spawnPulseClusters } from './weapons.js';
 import { PASSIVES, buildPool, applyUpgrade, applyAscension } from './upgrades.js';
 import { particles, resetParticles, updateParticles, addRing, addBurst, addDot, addArc, drawParticles } from './particles.js';
 import { mkBoss, updateBoss, drawBoss, hitBoss, BOSS_SPAWN_TIME, BOSS_RESPAWN_DELAY } from './boss.js';
 import { SYNERGIES, getSave, recordDiscovery, recordRun } from './progression.js';
 import { WORLD_BOUNDARY_WARN, WORLD_H, WORLD_W } from './constants.js';
+import { ARC_BLADE_TIERS, getDiscAngle as getArcDiscAngle, quadPoint as quadBezierPoint } from './arcBlade.js';
+import { renderUpgradeCard as renderUpgradeCardView, formatRunTime as formatRunTimeView } from './gameUi.js';
+import { MenuBackground } from './menuBackground.js';
+import {
+  createPlaytestBuild as makePlaytestBuild,
+  createPlaytestLabState as makePlaytestLabState,
+  getLabNextBossTime as getPlaytestLabNextBossTime,
+  getNextSurgeTime as getPlaytestNextSurgeTime,
+  getXpTargetForLevel as getPlaytestXpTargetForLevel,
+  LAB_PASSIVE_INPUTS as LAB_PASSIVE_INPUT_CONFIG,
+  LAB_WEAPON_INPUTS as LAB_WEAPON_INPUT_CONFIG,
+  PLAYTEST_LAB_PRESETS as PLAYTEST_LAB_PRESETS_CONFIG,
+  previewPlaytestPlayer as buildPreviewPlaytestPlayer,
+  renderPlaytestLab as renderPlaytestLabView,
+  sanitizePlaytestBuild as sanitizePlaytestBuildView,
+} from './playtest.js';
+import { hexToRgba, traceEnemyShape } from './renderUtils.js';
 import {
   initAudio, resumeAudio,
   playEMPSound,
@@ -18,202 +35,11 @@ import {
   playNovaDetonationSound,
   playFrenzySound,
   playHit, playEnemyDeath, playPlayerHit, playDodge,
-  playLevelUp, playXp, playSurge, playDeath, playDeathSound, playDiscoverySound, playAscensionOpen, playUIClick, playUIClose, playUIOpen, playUISelect,
+  playLevelUp, playXp, playSurge, playDeathSound, playDiscoverySound, playAscensionOpen, playUIClick, playUIClose, playUIOpen, playUISelect,
   playShatter,
   playBossWarning, playBossPhaseTwo, playBossDeath,
   startBossMusic, stopBossMusic,
 } from './audio.js';
-
-const ARC_BLADE_TIERS = {
-  1: { discCount: 1, rx: 55, ry: 35, thetaSpeed: 3.2, dmgMult: 1.0, pierce: false },
-  2: { discCount: 1, rx: 65, ry: 42, thetaSpeed: 3.2, dmgMult: 1.3, pierce: false },
-  3: { discCount: 2, rx: 75, ry: 48, thetaSpeed: 3.0, dmgMult: 1.3, pierce: false },
-  4: { discCount: 2, rx: 85, ry: 55, thetaSpeed: 2.8, dmgMult: 1.4, pierce: false },
-  5: { discCount: 3, rx: 95, ry: 62, thetaSpeed: 2.6, dmgMult: 1.5, pierce: false },
-};
-
-function traceEnemyShape(ctx, e) {
-  ctx.beginPath();
-  if (e.shape === 'sq') ctx.rect(e.x - e.r, e.y - e.r, e.r * 2, e.r * 2);
-  else if (e.shape === 'tri') {
-    ctx.moveTo(e.x, e.y - e.r);
-    ctx.lineTo(e.x + e.r, e.y + e.r);
-    ctx.lineTo(e.x - e.r, e.y + e.r);
-    ctx.closePath();
-  } else if (e.shape === 'pent') {
-    for (let i = 0; i < 5; i++) {
-      const angle = (i / 5) * Math.PI * 2 - Math.PI / 2;
-      const px = e.x + Math.cos(angle) * e.r;
-      const py = e.y + Math.sin(angle) * e.r;
-      if (i === 0) ctx.moveTo(px, py);
-      else ctx.lineTo(px, py);
-    }
-    ctx.closePath();
-  } else if (e.shape === 'diamond') {
-    ctx.moveTo(e.x, e.y - e.r);
-    ctx.lineTo(e.x + e.r, e.y);
-    ctx.lineTo(e.x, e.y + e.r);
-    ctx.lineTo(e.x - e.r, e.y);
-    ctx.closePath();
-  } else if (e.shape === 'hex') {
-    for (let i = 0; i < 6; i++) {
-      const angle = (i / 6) * Math.PI * 2 - Math.PI / 6;
-      const px = e.x + Math.cos(angle) * e.r;
-      const py = e.y + Math.sin(angle) * e.r;
-      if (i === 0) ctx.moveTo(px, py);
-      else ctx.lineTo(px, py);
-    }
-    ctx.closePath();
-  } else {
-    ctx.arc(e.x, e.y, e.r, 0, Math.PI * 2);
-  }
-}
-
-function hexToRgba(hex, alpha = 1) {
-  const normalized = String(hex || '').replace('#', '');
-  const full = normalized.length === 3
-    ? normalized.split('').map(ch => ch + ch).join('')
-    : normalized;
-  if (full.length !== 6) return `rgba(255,68,68,${alpha})`;
-  const r = parseInt(full.slice(0, 2), 16);
-  const g = parseInt(full.slice(2, 4), 16);
-  const b = parseInt(full.slice(4, 6), 16);
-  return `rgba(${r},${g},${b},${alpha})`;
-}
-
-class MenuBackground {
-  constructor(canvas) {
-    this.canvas = canvas;
-    this.ctx = canvas.getContext('2d');
-    this.nodes = [];
-    this.connections = [];
-    this.packets = [];
-    this.running = false;
-    this.animFrame = null;
-    this.gt = 0;
-    this.lastTime = 0;
-    this._onResize = () => this.resize();
-    this.init();
-  }
-
-  resize() {
-    this.canvas.width = window.innerWidth;
-    this.canvas.height = window.innerHeight;
-  }
-
-  init() {
-    this.resize();
-    window.addEventListener('resize', this._onResize);
-    const count = 80;
-    this.nodes = Array.from({ length: count }, () => ({
-      x: Math.random() * this.canvas.width,
-      y: Math.random() * this.canvas.height,
-      pulses: Math.random() < 0.25,
-      pulseOffset: Math.random() * Math.PI * 2,
-      r: 2.5 + Math.random() * 1.5,
-      vx: (Math.random() - 0.5) * 4,
-      vy: (Math.random() - 0.5) * 4,
-    }));
-
-    this.connections = [];
-    this.nodes.forEach((a, i) => {
-      const distances = this.nodes
-        .map((b, j) => ({ j, d: Math.hypot(b.x - a.x, b.y - a.y) }))
-        .filter(({ j, d }) => j !== i && d < 200)
-        .sort((lhs, rhs) => lhs.d - rhs.d)
-        .slice(0, 3);
-      distances.forEach(({ j }) => {
-        if (!this.connections.find(c => (c.a === i && c.b === j) || (c.a === j && c.b === i))) {
-          this.connections.push({ a: i, b: j });
-        }
-      });
-    });
-
-    for (let i = 0; i < 5; i++) this.spawnPacket();
-  }
-
-  spawnPacket() {
-    if (!this.connections.length) return;
-    const connIdx = Math.floor(Math.random() * this.connections.length);
-    this.packets.push({ connIdx, t: 0, speed: 0.008 + Math.random() * 0.012 });
-  }
-
-  start() {
-    if (this.running) return;
-    this.running = true;
-    this.canvas.classList.add('visible');
-    this.lastTime = performance.now();
-    this.loop(this.lastTime);
-  }
-
-  stop() {
-    this.running = false;
-    this.canvas.classList.remove('visible');
-    if (this.animFrame) cancelAnimationFrame(this.animFrame);
-    this.animFrame = null;
-  }
-
-  loop(ts) {
-    if (!this.running) return;
-    const dt = Math.min((ts - this.lastTime) / 1000, 0.05);
-    this.lastTime = ts;
-    this.gt += dt;
-    this.update(dt);
-    this.draw();
-    this.animFrame = requestAnimationFrame(next => this.loop(next));
-  }
-
-  update(dt) {
-    this.nodes.forEach(node => {
-      node.x += node.vx * dt;
-      node.y += node.vy * dt;
-      if (node.x < 0 || node.x > this.canvas.width) node.vx *= -1;
-      if (node.y < 0 || node.y > this.canvas.height) node.vy *= -1;
-      node.x = cl(node.x, 0, this.canvas.width);
-      node.y = cl(node.y, 0, this.canvas.height);
-    });
-
-    this.packets.forEach(packet => { packet.t += packet.speed; });
-    this.packets = this.packets.filter(packet => packet.t < 1);
-    while (this.packets.length < 5) this.spawnPacket();
-  }
-
-  draw() {
-    const { ctx, canvas, gt } = this;
-    ctx.clearRect(0, 0, canvas.width, canvas.height);
-    ctx.strokeStyle = 'rgba(0,207,255,0.06)';
-    ctx.lineWidth = 1;
-    this.connections.forEach(connection => {
-      const a = this.nodes[connection.a];
-      const b = this.nodes[connection.b];
-      ctx.beginPath();
-      ctx.moveTo(a.x, a.y);
-      ctx.lineTo(b.x, b.y);
-      ctx.stroke();
-    });
-
-    this.nodes.forEach(node => {
-      const pulse = node.pulses ? 0.8 + 0.2 * Math.sin(gt * 1.5 + node.pulseOffset) : 1;
-      ctx.fillStyle = 'rgba(0,207,255,0.15)';
-      ctx.beginPath();
-      ctx.arc(node.x, node.y, node.r * pulse, 0, Math.PI * 2);
-      ctx.fill();
-    });
-
-    this.packets.forEach(packet => {
-      const connection = this.connections[packet.connIdx];
-      if (!connection) return;
-      const a = this.nodes[connection.a];
-      const b = this.nodes[connection.b];
-      const x = a.x + (b.x - a.x) * packet.t;
-      const y = a.y + (b.y - a.y) * packet.t;
-      ctx.fillStyle = 'rgba(0,207,255,0.4)';
-      ctx.beginPath();
-      ctx.arc(x, y, 2.5, 0, Math.PI * 2);
-      ctx.fill();
-    });
-  }
-}
 
 export class Game {
   constructor() {
@@ -257,7 +83,7 @@ export class Game {
     this.shatterBursts = [];
     this.playtestMode = false;
     this.playtestBuild = null;
-    this.playtestLabState = createPlaytestLabState();
+    this.playtestLabState = makePlaytestLabState();
     this.camX = 0;
     this.camY = 0;
     this.bgNodes = [];
@@ -369,7 +195,7 @@ export class Game {
     this.selectedCharId = char.id;
     this.playtestMode = !!options.playtest;
     if (this.playtestMode) {
-      this.playtestBuild = sanitizePlaytestBuild(options.build || this.playtestBuild || createPlaytestBuild(char), char);
+      this.playtestBuild = sanitizePlaytestBuildView(options.build || this.playtestBuild || makePlaytestBuild(char), char);
     }
     initAudio();
     resumeAudio();
@@ -564,7 +390,7 @@ export class Game {
   }
 
   update(dt) {
-    const { P, W, H } = this;
+    const { P } = this;
     this._cryoStormSoundPlayedThisFrame = false;
     this.updateCamera();
     const sh = this.shake;
@@ -956,7 +782,7 @@ export class Game {
     for (let i = 0; i < tier.discCount; i++) {
       const active = P._arcDiscs.filter(disc => disc.discIndex === i);
       if (active.length === 0) {
-        const throwAngle = getDiscAngle(i, tier.discCount, baseAngle);
+        const throwAngle = getArcDiscAngle(i, tier.discCount, baseAngle);
         this.launchDisc(i, throwAngle);
       }
     }
@@ -1546,7 +1372,7 @@ export class Game {
       e._pullTimer = 0.3;
       e._pullSpeed = 400;
     });
-    addBurst(x, y, '#FFB627', 12, 110, -2.4, 0.28);
+    addBurst(x, y, '#FFB627', 12, 110, 2.4, 0.28);
     addRing(x, y, pullRadius, 'rgba(255,182,39,0.4)', 1.8, 0.18);
   }
 
@@ -1670,7 +1496,6 @@ export class Game {
     if (bossFight && this.surgeActive) {
       this.surgeActive = false;
       this.surgeFlashT = 0;
-      setSurge(false);
     }
 
     // suppress surge activation during boss intro/fight, and push nextSurge forward so
@@ -1685,7 +1510,6 @@ export class Game {
       this.surgeTimer = 8 + Math.floor(this.gt / 60) * 3;
       this.nextSurge += 40;
       this.surgeFlashT = 1.8;
-      setSurge(true);
       playSurge();
     }
     if (this.surgeActive) {
@@ -1693,7 +1517,6 @@ export class Game {
       if (this.surgeTimer <= 0) {
         this.surgeActive = false;
         this.surgeCount++;
-        setSurge(false);
       }
     }
     if (this.surgeFlashT > 0) this.surgeFlashT -= dt;
@@ -1764,7 +1587,7 @@ export class Game {
   }
 
   _updateBoss(dt) {
-    const { W, H } = this;
+    const { H } = this;
 
     // warning 5s before intro
     if (!this.bossWarned && this.gt >= this.nextBossTime - 5 && !this.boss && !this.bossIntro) {
@@ -1868,7 +1691,7 @@ export class Game {
     this.paused = true;
     const pool = buildPool(this.P, { allowAscension: false });
     this.currentUpgradePool = pool;
-    const cards = pool.map(u => renderUpgradeCard(u, this.P, `window.__game.pickBossUpgrade('${u.id}')`)).join('');
+    const cards = pool.map(u => renderUpgradeCardView(u, this.P, `window.__game.pickBossUpgrade('${u.id}')`)).join('');
     showOverlay(`
       <div style="color:#E24B4A;font-size:9px;letter-spacing:3px;margin-bottom:6px">// SIGNAL TERMINATED //</div>
       <div style="font-size:15px;color:#E24B4A;letter-spacing:2px;margin-bottom:4px">BOSS DEFEATED</div>
@@ -1934,10 +1757,6 @@ export class Game {
           triggerSynergy: (id) => this.triggerSynergy(id),
         });
         if (wid === 'emp' && empPreStun) {
-          const newlyStunned = enemies.filter(e => {
-            const wasStunned = empPreStun.get(e.id);
-            return e.hp > 0 && !wasStunned && e.stunned && (e.stunT || 0) > 0;
-          });
           if (empAscension === 'cascade_pulse') {
             const hitEnemies = (empEnemyPool || []).filter(e => {
               const prevHp = empPreHp?.get(e.id);
@@ -2504,11 +2323,27 @@ export class Game {
     playUIOpen();
     const pool = buildPool(this.P);
     this.currentUpgradePool = pool;
-    const cards = pool.map(u => renderUpgradeCard(u, this.P, `window.__game.pickUpgrade('${u.id}', this)`)).join('');
+    const cards = pool.map(u => renderUpgradeCardView(u, this.P, `window.__game.pickUpgrade('${u.id}', this)`)).join('');
+
+    // Build current loadout summary
+    const ownedIds = getOwnedWeaponIds(this.P);
+    const loadoutItems = [];
+    for (let i = 0; i < 4; i++) {
+      if (ownedIds[i]) {
+        const w = WDEFS[ownedIds[i]];
+        const lvl = getWeaponLevel(this.P, ownedIds[i]);
+        loadoutItems.push(`<span style="color:${w.col}">${w.icon} ${w.name} L${lvl}</span>`);
+      } else {
+        loadoutItems.push(`<span style="color:#282828">EMPTY</span>`);
+      }
+    }
+    const loadoutSummary = `<div style="font-size:10px;color:#aaa;letter-spacing:2px;margin-bottom:16px">CURRENT: ${loadoutItems.join(' · ')}</div>`;
+
     showOverlay(`
       <div style="color:#444;font-size:9px;letter-spacing:3px;margin-bottom:6px">// SYSTEM UPGRADE //</div>
       <div style="font-size:15px;color:#BF77FF;letter-spacing:2px;margin-bottom:4px">LEVEL ${this.P.level} — CHOOSE ONE</div>
       <div style="font-size:9px;color:#444;letter-spacing:2px;margin-bottom:18px">weapon + passive choices every level</div>
+      ${loadoutSummary}
       <div class="upg-grid">${cards}</div>`, 'levelup-screen');
   }
 
@@ -2580,7 +2415,7 @@ export class Game {
     const charBest = save?.personalBests?.perCharacter?.[this.P.char];
     const isNewTimeBest = bestFields.has('bestTime');
     const isNewKillBest = bestFields.has('mostKills');
-    const timeStr = formatRunTime(this.gt);
+    const timeStr = formatRunTimeView(this.gt);
     const surgeCount = this.surgeCount;
     const weaponsHtml = getOwnedWeaponIds(this.P)
       .map(id => {
@@ -2615,7 +2450,7 @@ export class Game {
             TIME &nbsp;
             <span class="${isNewTimeBest ? 'new-best' : ''}">${timeStr}</span>
             ${isNewTimeBest ? '<span class="best-tag">★ BEST</span>' : ''}
-            ${charBest?.bestTime ? `<span class="prev-best">PB ${formatRunTime(charBest.bestTime)}</span>` : ''}
+            ${charBest?.bestTime ? `<span class="prev-best">PB ${formatRunTimeView(charBest.bestTime)}</span>` : ''}
           </div>
           <div class="death-stat">
             KILLS &nbsp;
@@ -2654,46 +2489,6 @@ export class Game {
     document.getElementById('pause-btn')?.style.setProperty('display', 'none');
     stopBossMusic();
     this.menuBg?.start();
-    const selectedId = this.menuSelectedCharId;
-    const char = selectedId ? CHARACTERS[selectedId] : null;
-    const cards = Object.values(CHARACTERS).map(c => {
-      const active = c.id === char?.id ? ' active selected' : '';
-      const unselected = selectedId && c.id !== selectedId ? ' unselected' : '';
-      const weapon = WDEFS[c.startWeapon];
-      const passiveCopy = c.id === 'ghost'
-        ? '20% dodge chance. Freeze setups and kite hard.'
-        : c.id === 'bruiser'
-          ? '+35% damage under 50% HP. Heavy close-range pressure.'
-          : 'Stunned enemies drop extra XP. Fast snowball control.';
-      const passiveLabel = c.id === 'ghost'
-        ? 'GHOST STEP'
-        : c.id === 'bruiser'
-          ? 'LOW HP RAMP'
-          : 'DATA LEECH';
-      const passiveValue = c.id === 'ghost'
-        ? '20% dodge chance'
-        : c.id === 'bruiser'
-          ? '+35% damage below 50% HP'
-          : '2x XP from stunned kills';
-      return `<button class="char-card ui-btn-press${active}${unselected}" onclick="window.__game.selectCharacter('${c.id}')">
-        <div class="char-card-top">
-          <span class="char-sigil" style="color:${c.col}">◆</span>
-          <span class="char-name">${c.name}</span>
-          <span class="char-tag">${c.id === char?.id ? 'SELECTED' : 'READY'}</span>
-        </div>
-        <div class="char-compact-row">
-          <span class="char-weapon" style="color:${weapon.col}">${weapon.icon} ${weapon.name}</span>
-          <span class="char-speed">SPD ${c.spd}</span>
-        </div>
-        ${c.id === char?.id ? `
-          <div class="char-inline-meta">
-            <div class="char-inline-line"><span>PASSIVE</span><strong>${passiveLabel}</strong></div>
-            <div class="char-inline-line"><span>EFFECT</span><strong>${passiveValue}</strong></div>
-            <div class="char-inline-copy">${passiveCopy}</div>
-          </div>
-        ` : ''}
-      </button>`;
-    }).join('');
     showOverlay(`
       <div class="menu-shell">
         <div id="menu-splash">
@@ -2863,7 +2658,7 @@ export class Game {
     if (!CHARACTERS[id]) return;
     this.selectedCharId = id;
     this.menuSelectedCharId = id;
-    this.playtestBuild = sanitizePlaytestBuild(this.playtestBuild, CHARACTERS[id]);
+    this.playtestBuild = sanitizePlaytestBuildView(this.playtestBuild, CHARACTERS[id]);
     this.syncCharacterSelectUI();
     playUISelect();
   }
@@ -2892,15 +2687,15 @@ export class Game {
 
   openPlaytestLab() {
     const char = this.getSelectedCharacter();
-    this.playtestBuild = sanitizePlaytestBuild(this.playtestBuild, char);
+    this.playtestBuild = sanitizePlaytestBuildView(this.playtestBuild, char);
     this.syncPlaytestLabState();
     if (this.running) this.paused = true;
-    showOverlay(renderPlaytestLab(this.playtestBuild, char, this.running, this.getPlaytestWorldDebug(), this.playtestLabState), 'playtest-screen');
+    showOverlay(renderPlaytestLabView(this.playtestBuild, char, this.running, this.getPlaytestWorldDebug(), this.playtestLabState), 'playtest-screen');
     this.initPlaytestLabControls();
   }
 
   getPlaytestWorldDebug() {
-    const player = this.running && this.P ? this.P : previewPlaytestPlayer(this.getSelectedCharacter(), this.playtestBuild);
+    const player = this.running && this.P ? this.P : buildPreviewPlaytestPlayer(this.getSelectedCharacter(), this.playtestBuild);
     const camX = cl((player.x || WORLD_W / 2) - this.W / 2, 0, Math.max(0, WORLD_W - this.W));
     const camY = cl((player.y || WORLD_H / 2) - this.H / 2, 0, Math.max(0, WORLD_H - this.H));
     return {
@@ -2926,7 +2721,7 @@ export class Game {
   }
 
   resetPlaytestBuild() {
-    this.playtestBuild = createPlaytestBuild(this.getSelectedCharacter());
+    this.playtestBuild = makePlaytestBuild(this.getSelectedCharacter());
     if (this.running && this.playtestMode) this._applyPlaytestBuildToPlayer();
     this.openPlaytestLab();
   }
@@ -2942,7 +2737,7 @@ export class Game {
 
   playtestAdjustWeapon(wid, delta) {
     const char = this.getSelectedCharacter();
-    this.playtestBuild = sanitizePlaytestBuild(this.playtestBuild, char);
+    this.playtestBuild = sanitizePlaytestBuildView(this.playtestBuild, char);
     const min = 0;
     const current = this.playtestBuild.weapons[wid] || 0;
     this.playtestBuild.weapons[wid] = cl(Math.round(current + delta), min, 5);
@@ -2953,7 +2748,7 @@ export class Game {
 
   playtestAdjustPassive(pid, delta) {
     const char = this.getSelectedCharacter();
-    this.playtestBuild = sanitizePlaytestBuild(this.playtestBuild, char);
+    this.playtestBuild = sanitizePlaytestBuildView(this.playtestBuild, char);
     const current = this.playtestBuild.passives[pid] || 0;
     this.playtestBuild.passives[pid] = cl(Math.round(current + delta), 0, 8);
     if (this.running && this.playtestMode) this._applyPlaytestBuildToPlayer();
@@ -2962,7 +2757,7 @@ export class Game {
 
   playtestSetAscension(wid, ascensionId) {
     const char = this.getSelectedCharacter();
-    this.playtestBuild = sanitizePlaytestBuild(this.playtestBuild, char);
+    this.playtestBuild = sanitizePlaytestBuildView(this.playtestBuild, char);
     if ((this.playtestBuild.weapons[wid] || 0) < 5) return;
     this.playtestBuild.ascensions[wid] = ascensionId;
     if (this.running && this.playtestMode) this._applyPlaytestBuildToPlayer();
@@ -3014,20 +2809,20 @@ export class Game {
 
   syncPlaytestLabState() {
     const char = this.getSelectedCharacter();
-    this.playtestBuild = sanitizePlaytestBuild(this.playtestBuild, char);
-    if (!this.playtestLabState) this.playtestLabState = createPlaytestLabState();
+    this.playtestBuild = sanitizePlaytestBuildView(this.playtestBuild, char);
+    if (!this.playtestLabState) this.playtestLabState = makePlaytestLabState();
 
-    Object.keys(LAB_WEAPON_INPUTS).forEach(wid => {
+    Object.keys(LAB_WEAPON_INPUT_CONFIG).forEach(wid => {
       this.playtestLabState.weapons[wid] = this.playtestBuild?.weapons?.[wid] || 0;
     });
-    Object.keys(LAB_PASSIVE_INPUTS).forEach(pid => {
+    Object.keys(LAB_PASSIVE_INPUT_CONFIG).forEach(pid => {
       this.playtestLabState.passives[pid] = this.playtestBuild?.passives?.[pid] || 0;
     });
 
     if (this.running && this.P) {
       this.playtestLabState.timeSkipSeconds = Math.max(0, Math.floor(this.gt));
       this.playtestLabState.surgeCount = Math.max(0, this.surgeCount || 0);
-      Object.keys(LAB_WEAPON_INPUTS).forEach(wid => {
+      Object.keys(LAB_WEAPON_INPUT_CONFIG).forEach(wid => {
         this.playtestLabState.weapons[wid] = getWeaponLevel(this.P, wid);
       });
       this.playtestLabState.stats.hp = Math.max(1, Math.round(this.P.maxHp || 100));
@@ -3035,7 +2830,7 @@ export class Game {
       return;
     }
 
-    const preview = previewPlaytestPlayer(char, this.playtestBuild);
+    const preview = buildPreviewPlaytestPlayer(char, this.playtestBuild);
     this.playtestLabState.timeSkipSeconds = 0;
     this.playtestLabState.surgeCount = 0;
     this.playtestLabState.stats.hp = Math.max(1, Math.round(preview.maxHp || 100));
@@ -3064,15 +2859,15 @@ export class Game {
   }
 
   readPlaytestLabInputs() {
-    const state = createPlaytestLabState();
+    const state = makePlaytestLabState();
     state.timeSkipSeconds = cl(this.getLabNumberValue('lab-timeskip', this.playtestLabState?.timeSkipSeconds || 0), 0, 600);
     state.surgeCount = cl(this.getLabNumberValue('lab-surgecount', this.playtestLabState?.surgeCount || 0), 0, 10);
 
-    Object.entries(LAB_WEAPON_INPUTS).forEach(([wid, inputId]) => {
-      state.weapons[wid] = cl(this.getLabNumberValue(inputId, 0), 0, 5);
+    Object.entries(LAB_WEAPON_INPUT_CONFIG).forEach(([wid, config]) => {
+      state.weapons[wid] = cl(this.getLabNumberValue(config.inputId, 0), config.min, config.max);
     });
-    Object.entries(LAB_PASSIVE_INPUTS).forEach(([pid, inputId]) => {
-      state.passives[pid] = cl(this.getLabNumberValue(inputId, 0), 0, 5);
+    Object.entries(LAB_PASSIVE_INPUT_CONFIG).forEach(([pid, config]) => {
+      state.passives[pid] = cl(this.getLabNumberValue(config.inputId, 0), config.min, config.max);
     });
 
     state.stats.hp = cl(this.getLabNumberValue('lab-stat-hp', this.playtestLabState?.stats?.hp || 100), 1, 999);
@@ -3098,8 +2893,7 @@ export class Game {
     this.surgeActive = false;
     this.surgeTimer = 0;
     this.surgeFlashT = 0;
-    setSurge(false);
-    this.nextSurge = getNextSurgeTime(targetTime);
+    this.nextSurge = getPlaytestNextSurgeTime(targetTime);
     resetEnemies();
     this.clearEnemyBullets();
     this._activeShields = [];
@@ -3110,7 +2904,7 @@ export class Game {
       this.bossActive = false;
       this.bossRespawnT = 0;
       this.bossWarned = false;
-      this.nextBossTime = getLabNextBossTime(targetTime);
+      this.nextBossTime = getPlaytestLabNextBossTime(targetTime);
       clearExtraTarget();
     }
 
@@ -3134,12 +2928,12 @@ export class Game {
       ascensions: { ...(this.playtestBuild?.ascensions || {}) },
     };
 
-    Object.keys(LAB_WEAPON_INPUTS).forEach(wid => {
+    Object.keys(LAB_WEAPON_INPUT_CONFIG).forEach(wid => {
       nextBuild.weapons[wid] = allowedWeaponIds.has(wid) ? state.weapons[wid] : 0;
       if (nextBuild.weapons[wid] < 5) nextBuild.ascensions[wid] = null;
     });
 
-    this.playtestBuild = sanitizePlaytestBuild(nextBuild, char);
+    this.playtestBuild = sanitizePlaytestBuildView(nextBuild, char);
     this._applyPlaytestBuildToPlayer();
 
     const hpOverride = cl(state.stats.hp, 1, 999);
@@ -3149,14 +2943,14 @@ export class Game {
     this.P.hpLag = hpOverride;
     this.P.level = levelOverride;
     this.P.xp = 0;
-    this.P.xpNext = getXpTargetForLevel(levelOverride);
+    this.P.xpNext = getPlaytestXpTargetForLevel(levelOverride);
 
     updateHUD(this.P, this.gt, WDEFS);
     this.openPlaytestLab();
   }
 
   applyPlaytestPreset(presetId) {
-    const preset = PLAYTEST_LAB_PRESETS[presetId];
+    const preset = PLAYTEST_LAB_PRESETS_CONFIG[presetId];
     if (!preset) return;
 
     Object.entries(preset).forEach(([id, value]) => {
@@ -4238,11 +4032,11 @@ export class Game {
       const tx = rect.left + rect.width * fx.targetRatio;
       const cx = (start.x + tx) * 0.5 + fx.drift;
       const cy = Math.min(start.y, targetY) - fx.lift;
-      const x = quadPoint(start.x, cx, tx, t);
-      const y = quadPoint(start.y, cy, targetY, t);
+      const x = quadBezierPoint(start.x, cx, tx, t);
+      const y = quadBezierPoint(start.y, cy, targetY, t);
       const trailT = Math.max(0, t - 0.16);
-      const trailX = quadPoint(start.x, cx, tx, trailT);
-      const trailY = quadPoint(start.y, cy, targetY, trailT);
+      const trailX = quadBezierPoint(start.x, cx, tx, trailT);
+      const trailY = quadBezierPoint(start.y, cy, targetY, trailT);
       const alpha = Math.max(0, fx.life / fx.lt);
 
       ctx.strokeStyle = `rgba(198,255,0,${0.18 * alpha})`;
@@ -4304,7 +4098,7 @@ export class Game {
   drawSplitDrones() {
     const { ctx } = this;
     if (!this.P._splitDrones?.length) return;
-    this.P._splitDrones.forEach((sd, i) => {
+    this.P._splitDrones.forEach((sd) => {
       const a = Math.min(1, sd.life / sd.maxLife);
       ctx.globalAlpha = a * 0.85;
       ctx.fillStyle = '#88FFDD';
@@ -4324,552 +4118,5 @@ export class Game {
   }
 }
 
-function wStats(wid, lvl, p) {
-  const rb = p.rateBonus || 1;
-  const empScaling = EMP_SCALING[Math.min(Math.max(lvl, 1), 5)] || EMP_SCALING[1];
-  const molotovTier = MOLOTOV_TIERS[Math.min(Math.max(lvl, 1), 5)] || MOLOTOV_TIERS[1];
-  const arcTier = ARC_BLADE_TIERS[Math.min(Math.max(lvl, 1), 5)] || ARC_BLADE_TIERS[1];
-  const rates = {
-    cryo: (1.9 + lvl * 0.35) * rb,
-    pulse: 0.45 * rb,
-    emp: 0.4 * rb,
-    swarm: 0,
-    molotov: 1 / (molotovTier.fireRate * (1 / rb)),
-    barrier: 0,
-    arcblade: 0,
-  };
-  const r = (rates[wid] || 0).toFixed(1);
-  if (wid === 'cryo') return [`Rate: ${r}/s`, `Projectiles: ${Math.min(5, Math.max(1, lvl))}`, lvl >= 2 ? 'Spread: widening fan' : 'Slow: 50% for 2s', 'Pierce: 1 enemy'];
-  if (wid === 'pulse') return [`Rate: ${r}/s`, `Dmg: ${Math.round(p.dmg * (28 + lvl * 10))}`, 'Impact: heavy explosive shot', lvl >= 2 ? 'Cluster: splits on impact' : 'Cooldown: long', lvl >= 5 ? 'Cluster: four split layers' : lvl >= 4 ? 'Cluster: three split layers' : lvl >= 3 ? 'Cluster: bomblets split again' : ''];
-  if (wid === 'emp') return [`Rate: ${r}/s`, `Radius: ${empScaling.radius}px`, `Stun: ${empScaling.stun.toFixed(1)}s`, `Dmg mult: x${empScaling.dmgMult.toFixed(1)}`];
-  if (wid === 'swarm') return [`Drones: ${Math.min(6, 1 + lvl)}`, `Dmg/hit: ${Math.round(p.dmg * (28 + lvl * 14))}`, 'Orbit: auto-seek', lvl >= 2 ? 'Upgrade: +1 drone' : ''];
-  if (wid === 'molotov') return [`Rate: ${r}/s`, `Pools: ${molotovTier.pools}`, `Radius: ${molotovTier.radius}px`, `Duration: ${molotovTier.duration.toFixed(1)}s`, `Dmg mult: x${molotovTier.dmgMult}`];
-  if (wid === 'barrier') {
-    const tier = WDEFS.barrier.tiers[Math.min(lvl, 5)];
-    return [`Rate: ${r}/s`, `Absorb: ${tier.maxCap} dmg`, `Active: ${tier.activeDuration}s`, `Recharge: ${tier.rechargeTime}s`];
-  }
-  if (wid === 'arcblade') {
-    return [
-      `Blades: ${arcTier.discCount}`,
-      `Orbit: ${arcTier.rx}x${arcTier.ry}`,
-      `Spin: ${arcTier.thetaSpeed.toFixed(1)}`,
-      `Dmg mult: x${arcTier.dmgMult.toFixed(1)}`
-    ];
-  }
-  return [];
-}
-
-function wDesc(wid, lvl) {
-  return ({
-    cryo: {
-      1: 'Fires a single Cryo lance that slows enemies by 50% for 2 seconds and pierces 1 target.',
-      2: 'Adds a second Cryo lance and starts spreading the volley into a light fan.',
-      3: 'Adds a third Cryo lance, giving the weapon a wider spread for better lane coverage.',
-      4: 'Adds a fourth Cryo lance and widens the spread again to cover more of the screen.',
-      5: 'Adds a fifth Cryo lance with the widest spread version of the weapon.'
-    },
-    pulse: {
-      1: 'Launches a slow-cycling heavy Pulse round that explodes for strong burst damage on impact.',
-      2: 'The main Pulse detonation now throws cluster bombs outward when it lands.',
-      3: 'Cluster bombs now split again when they detonate, pushing the blast pattern much farther outward.',
-      4: 'Those secondary cluster bombs now split again, creating a third outward wave of explosions.',
-      5: 'Pulse reaches full cluster saturation, with yet another recursive split layer for a huge blast web.'
-    },
-    emp: {
-      1: 'Releases a 160px EMP burst that lightly damages and stuns enemies for 1.2 seconds.',
-      2: 'EMP grows to 200px, hits harder, and stuns for 1.4 seconds.',
-      3: 'EMP reaches 245px with stronger damage and a 1.6 second stun.',
-      4: 'EMP expands to 295px with a 1.8 second stun and higher control damage.',
-      5: 'EMP peaks at a 350px burst with a 2.0 second stun and 2.8x damage scaling.'
-    },
-    swarm: {
-      1: 'Deploys 2 orbiting drones that seek targets and strike automatically.',
-      2: 'Adds a third orbiting swarm drone.',
-      3: 'Adds a fourth orbiting swarm drone.',
-      4: 'Adds a fifth orbiting swarm drone.',
-      5: 'Adds a sixth orbiting swarm drone.'
-    },
-    molotov: {
-      1: 'Throws a Molotov toward the nearest enemy, creating one burning pool that deals continuous damage over time.',
-      2: 'The fire pool grows wider and burns harder while keeping a single throw target.',
-      3: 'Throws two bottles in a fan, creating two separate fire pools on landing.',
-      4: 'Those two pools grow larger and burn longer between throws.',
-      5: 'Throws three bottles in a wider fan, covering a broad zone in overlapping fire.'
-    },
-    barrier: {
-      1: 'Absorbs 40 damage per cycle. Active 4.2s, recharge 8s.',
-      2: 'Absorbs 65 damage per cycle. Active 5.1s, recharge 7s.',
-      3: 'Absorbs 95 damage per cycle. Active 5.9s, recharge 6s.',
-      4: 'Absorbs 130 damage per cycle. Active 6.8s, recharge 5s.',
-      5: 'Absorbs 175 damage per cycle. Active 8.5s, recharge 4s.'
-    },
-    arcblade: {
-      1: 'Throws a single orbiting boomerang blade that loops out and back around the player.',
-      2: 'The blade travels in a wider orbit and hits harder on each pass.',
-      3: 'Adds a second boomerang blade for mirrored orbit pressure.',
-      4: 'Both blades widen their orbit and gain more hit strength.',
-      5: 'Adds a third blade and reaches the weapon’s fullest orbiting coverage.'
-    }
-  }[wid] || {})[lvl] || '';
-}
-
-function renderUpgradeCard(u, p, onClick) {
-  if (u.type === 'ascension') {
-    const w = WDEFS[u.wid];
-    const optionNames = (u.options || []).map(option => option.name).join(' · ');
-    return `<div class="uc wep" data-upgrade-id="${u.id}" tabindex="0" onclick="${onClick}" style="border:1px solid rgba(0,207,255,0.85);box-shadow:0 0 0 2px rgba(0,207,255,0.18), inset 0 0 0 1px rgba(255,255,255,0.08);background:linear-gradient(180deg, rgba(5,14,20,0.98), rgba(11,19,28,0.98))">
-      <div class="ut" style="color:#00CFFF">ASCENSION</div>
-      <div class="un" style="color:${w.col}">${w.icon} ${w.name}</div>
-      <div class="ud">THIS L5 WEAPON CAN TRANSFORM</div>
-      <div class="us">${optionNames}</div></div>`;
-  }
-  if (u.type === 'wep') {
-    const w = WDEFS[u.wid];
-    const currentLvl = getWeaponLevel(p, u.wid) || 0;
-    const currentStats = currentLvl > 0 ? wStats(u.wid, currentLvl, p) : null;
-    const newStats = wStats(u.wid, u.lvl, p);
-    const statsHTML = newStats.map((stat, i) => {
-      const current = currentStats?.[i];
-      if (current && current !== stat) {
-        return `<div class="stat-change">
-          <span class="stat-old">${current}</span>
-          <span class="stat-arrow">→</span>
-          <span class="stat-new">${stat}</span>
-        </div>`;
-      }
-      return `<div class="stat-new-only">${stat}</div>`;
-    }).join('');
-    const subLine = u.isNew ? `UNLOCKS WEAPON ${w.name}` : `UPGRADES ${w.name} TO T${u.lvl}`;
-    const detailLines = [u.isNew ? weaponUnlockDesc(u.wid) : wDesc(u.wid, u.lvl)].filter(Boolean);
-    return `<div class="uc wep" data-upgrade-id="${u.id}" tabindex="0" onclick="${onClick}">
-      <div class="ut">WEAPON</div>
-      <div class="un">${w.icon} ${w.name} T${u.lvl}</div>
-      <div class="ud">${subLine}</div>
-      <div class="us">${statsHTML}${detailLines.map(line => `<div class="stat-copy">${line}</div>`).join('')}</div></div>`;
-  }
-  const preview = u.apply ? (() => { const c = { ...p }; return u.apply(c); })() : [];
-  return `<div class="uc pas" data-upgrade-id="${u.id}" tabindex="0" onclick="${onClick}">
-    <div class="ut">PASSIVE UPGRADE</div>
-    <div class="un">${passiveHeadline(u.id)}</div>
-    <div class="us">${formatPreviewLines(preview)}</div></div>`;
-}
-
-function formatPreviewLines(lines) {
-  return (lines || []).map(line => {
-    if (typeof line !== 'string') return '';
-    const parts = line.split(' -> ');
-    if (parts.length === 2) {
-      return `<div class="stat-change">
-        <span class="stat-old">${parts[0]}</span>
-        <span class="stat-arrow">→</span>
-        <span class="stat-new">${parts[1]}</span>
-      </div>`;
-    }
-    return `<div class="stat-new-only">${line}</div>`;
-  }).join('');
-}
-
-function weaponUnlockDesc(wid) {
-  return ({
-    cryo: 'Fires slowing Cryo lances that scale by adding more projectiles and wider spread.',
-    pulse: 'Launches a heavy explosive Pulse shell that upgrades into cluster-bomb bursts.',
-    emp: 'Sends a radial EMP stun that upgrades mostly through larger and larger control radius.',
-    swarm: 'Deploys orbiting drones that keep scaling by adding more swarm bodies.',
-    molotov: 'Lobs arcing bottles that burst into persistent fire pools for area denial and damage-over-time.',
-    barrier: 'Wraps the player in a cycling shield that absorbs damage, then recharges after breaking.',
-    arcblade: 'Throws orbiting boomerang blades that loop out and back around the player.'
-  }[wid] || 'Unlocks a new weapon.');
-}
-function passiveHeadline(id) {
-  return ({
-    p_spd: 'INCREASE MOVE SPEED',
-    p_dmg: 'INCREASE ALL DAMAGE',
-    p_mag: 'INCREASE XP PICKUP RANGE',
-    p_hp: 'INCREASE MAX HP',
-    p_dg: 'INCREASE DODGE CHANCE',
-    p_rt: 'INCREASE ATTACK SPEED'
-  }[id] || 'INCREASE RUN-WIDE STATS');
-}
-
-function formatWeaponList(p) {
-  return getOwnedWeaponIds(p)
-    .map(id => `${WDEFS[id].icon} ${WDEFS[id].name} T${getWeaponLevel(p, id)}`)
-    .join(' · ');
-}
-
-function formatRunTime(seconds) {
-  const total = Math.max(0, Math.floor(seconds || 0));
-  const mins = Math.floor(total / 60);
-  const secs = total % 60;
-  return `${mins}:${secs < 10 ? '0' : ''}${secs}`;
-}
-
-function renderBestMark(bestFields, field) {
-  return bestFields.has(field) ? ' <span class="death-best">★ BEST</span>' : '';
-}
-
-function createPlaytestBuild(char) {
-  const build = {
-    charId: char.id,
-    weapons: Object.fromEntries(Object.keys(WDEFS).map(wid => [wid, 0])),
-    passives: Object.fromEntries(PASSIVES.map(passive => [passive.id, 0])),
-    ascensions: Object.fromEntries(Object.keys(WDEFS).map(wid => [wid, null])),
-  };
-  build.weapons[char.startWeapon] = 1;
-  return build;
-}
-
-function sanitizePlaytestBuild(build, char) {
-  const base = createPlaytestBuild(char);
-  const next = {
-    charId: char.id,
-    weapons: { ...base.weapons, ...(build?.weapons || {}) },
-    passives: { ...base.passives, ...(build?.passives || {}) },
-    ascensions: { ...base.ascensions, ...(build?.ascensions || {}) },
-  };
-
-  Object.keys(next.weapons).forEach(wid => {
-    const min = 0;
-    next.weapons[wid] = cl(Math.round(next.weapons[wid] || 0), min, 5);
-  });
-
-  Object.keys(next.passives).forEach(pid => {
-    next.passives[pid] = cl(Math.round(next.passives[pid] || 0), 0, 8);
-  });
-
-  Object.keys(next.ascensions).forEach(wid => {
-    const options = ASCENSIONS[wid] || [];
-    const chosen = next.ascensions[wid];
-    if ((next.weapons[wid] || 0) < 5) {
-      next.ascensions[wid] = null;
-      return;
-    }
-    next.ascensions[wid] = options.some(option => option.id === chosen) ? chosen : null;
-  });
-
-  return next;
-}
-
-function previewPlaytestPlayer(char, build) {
-  const p = mkPlayer(0, 0, char);
-  const safeBuild = sanitizePlaytestBuild(build, char);
-  Object.keys(p.ws).forEach(wid => {
-    p.ws[wid] = mkWeaponState();
-  });
-  Object.entries(safeBuild.weapons).forEach(([wid, lvl]) => {
-    if (lvl > 0) addWeapon(p, wid, lvl);
-  });
-  PASSIVES.forEach(passive => {
-    const count = safeBuild.passives[passive.id] || 0;
-    for (let i = 0; i < count; i++) passive.apply(p);
-  });
-  Object.entries(safeBuild.ascensions || {}).forEach(([wid, ascensionId]) => {
-    if (!ascensionId) return;
-    if ((safeBuild.weapons[wid] || 0) < 5) return;
-    applyAscension(p, wid, ascensionId);
-  });
-  p.hp = p.maxHp;
-  p.hpLag = p.maxHp;
-  return p;
-}
-
-function renderPlaytestLab(build, char, isRunActive, worldDebug, labState) {
-  const safeBuild = sanitizePlaytestBuild(build, char);
-  const safeState = labState || createPlaytestLabState();
-  const summary = previewPlaytestPlayer(char, safeBuild);
-  const ascensionCards = Object.entries(ASCENSIONS).map(([wid, options]) => {
-    const weapon = WDEFS[wid];
-    const lvl = safeBuild.weapons[wid] || 0;
-    const selected = safeBuild.ascensions?.[wid] || null;
-    const locked = lvl < 5;
-    const optionButtons = options.map(option => `
-      <button
-        class="playtest-ascension-option${selected === option.id ? ' active' : ''}"
-        ${locked ? 'disabled' : ''}
-        onclick="window.__game.playtestSetAscension('${wid}', '${option.id}')">
-        <span>${option.name}</span>
-        <small>${option.description}</small>
-      </button>
-    `).join('');
-    return `
-      <div class="playtest-card">
-        <div class="playtest-card-top">
-          <div>
-            <div class="playtest-item-name" style="color:${weapon.col}">${weapon.icon} ${weapon.name}</div>
-            <div class="playtest-item-copy">${locked ? 'Reach Tier 5 in the lab to enable ascensions.' : 'Choose one transformation to test.'}</div>
-          </div>
-          <button class="playtest-clear" ${selected ? '' : 'disabled'} onclick="window.__game.playtestSetAscension('${wid}', null)">CLEAR</button>
-        </div>
-        <div class="playtest-item-copy">${selected ? `Selected: ${options.find(option => option.id === selected)?.name || 'None'}` : 'No ascension selected'}</div>
-        <div class="playtest-ascension-list">${optionButtons}</div>
-      </div>`;
-  }).join('');
-
-  const weaponCards = Object.keys(WDEFS).map(wid => {
-    const weapon = WDEFS[wid];
-    const lvl = safeBuild.weapons[wid] || 0;
-    const min = 0;
-    const canDown = lvl > min;
-    const stats = lvl > 0 ? wStats(wid, lvl, summary) : [weaponUnlockDesc(wid)];
-    return `
-      <div class="playtest-card">
-        <div class="playtest-card-top">
-          <div>
-            <div class="playtest-item-name" style="color:${weapon.col}">${weapon.icon} ${weapon.name}</div>
-            <div class="playtest-item-copy">${lvl > 0 ? `Tier ${lvl}` : 'Not equipped'}</div>
-          </div>
-          <div class="playtest-stepper">
-            <button class="playtest-step" ${canDown ? '' : 'disabled'} onclick="window.__game.playtestAdjustWeapon('${wid}', -1)">-</button>
-            <span class="playtest-value">${lvl}</span>
-            <button class="playtest-step" ${lvl < 5 ? '' : 'disabled'} onclick="window.__game.playtestAdjustWeapon('${wid}', 1)">+</button>
-          </div>
-        </div>
-        <div class="playtest-item-copy">Tap to slot in or remove this weapon instantly.</div>
-        <div class="playtest-stats">${stats.filter(Boolean).slice(0, 4).map(line => `<span>${line}</span>`).join('')}</div>
-      </div>`;
-  }).join('');
-
-  const passiveCards = PASSIVES.map(passive => {
-    const count = safeBuild.passives[passive.id] || 0;
-    const previewLines = passive.apply(previewPlaytestPlayer(char, safeBuild)).slice(0, 2);
-    return `
-      <div class="playtest-card">
-        <div class="playtest-card-top">
-          <div>
-            <div class="playtest-item-name">${passive.label}</div>
-            <div class="playtest-item-copy">Stacks instantly for feel testing.</div>
-          </div>
-          <div class="playtest-stepper">
-            <button class="playtest-step" ${count > 0 ? '' : 'disabled'} onclick="window.__game.playtestAdjustPassive('${passive.id}', -1)">-</button>
-            <span class="playtest-value">${count}</span>
-            <button class="playtest-step" ${count < 8 ? '' : 'disabled'} onclick="window.__game.playtestAdjustPassive('${passive.id}', 1)">+</button>
-          </div>
-        </div>
-        <div class="playtest-stats">${previewLines.map(line => `<span>${line}</span>`).join('')}</div>
-      </div>`;
-  }).join('');
-
-  const actions = isRunActive
-    ? `
-      <button class="btn" onclick="window.__game.closePlaytestLab()">RESUME TEST</button>
-      <button class="btn btn-secondary" onclick="window.__game.refillPlaytestVitals()">REFILL HP</button>
-      <button class="btn btn-secondary" onclick="window.__game.resetPlaytestBuild()">RESET BUILD</button>
-      <button class="btn btn-secondary" onclick="window.__game.showMainMenu()">MENU</button>`
-    : `
-      <button class="btn" onclick="window.__game.startPlaytestRun()">START TEST SESSION</button>
-      <button class="btn btn-secondary" onclick="window.__game.resetPlaytestBuild()">RESET BUILD</button>
-      <button class="btn btn-secondary" onclick="window.__game.showMainMenu()">BACK</button>`;
-
-  return `
-    <div class="playtest-shell">
-      <div class="records-head">
-        <div class="ov-title">PLAYTEST LAB</div>
-        <div class="ov-sub">// quick build toggles // no full run required //</div>
-      </div>
-      <section class="playtest-summary">
-        <div>
-          <div class="panel-label">ACTIVE OPERATOR</div>
-          <div class="playtest-summary-name" style="color:${char.col}">${char.name}</div>
-        </div>
-        <div class="playtest-summary-stats">
-          <span>SPD ${summary.spd}</span>
-          <span>DMG x${summary.dmg.toFixed(2)}</span>
-          <span>DODGE ${Math.round(summary.dodge * 100)}%</span>
-          <span>HP ${summary.maxHp}</span>
-        </div>
-      </section>
-      <section class="records-panel">
-        <div class="panel-label">WORLD DEBUG</div>
-        <div class="playtest-summary-stats">
-          <span>P (${worldDebug.x}, ${worldDebug.y})</span>
-          <span>CAM (${worldDebug.camX}, ${worldDebug.camY})</span>
-          <span>WORLD ${worldDebug.worldW} x ${worldDebug.worldH}</span>
-          <span>EDGE ${worldDebug.edgeDist}px</span>
-        </div>
-      </section>
-      <section class="records-panel">
-        <div class="panel-label">WEAPONS</div>
-        <div class="playtest-grid">${weaponCards}</div>
-      </section>
-      <section class="records-panel">
-        <div class="panel-label">PASSIVES</div>
-        <div class="playtest-grid">${passiveCards}</div>
-      </section>
-      <section class="records-panel">
-        <div class="panel-label">ASCENSIONS</div>
-        <div class="playtest-grid">${ascensionCards}</div>
-      </section>
-      <section class="records-panel">
-        <div class="lab-section">
-          <div class="lab-label">// TIME SKIP //</div>
-          <div class="lab-row">
-            <label for="lab-timeskip">Jump to (seconds):</label>
-            <input type="number" id="lab-timeskip" value="${safeState.timeSkipSeconds}" min="0" max="600" step="30">
-          </div>
-          <div class="lab-row">
-            <label for="lab-surgecount">Surge count override:</label>
-            <input type="number" id="lab-surgecount" value="${safeState.surgeCount}" min="0" max="10" step="1">
-          </div>
-          <button type="button" id="lab-apply-time">APPLY TIME SKIP</button>
-          <div class="lab-hint">Sets game clock and surge count. Enemies scale to the new time immediately.</div>
-        </div>
-        <div class="lab-section">
-          <div class="lab-label">// INSTANT LOADOUT //</div>
-          <div class="lab-label-sub">Weapons (level 0 = not equipped)</div>
-          <div class="lab-row"><label for="lab-w-cryo">Cryo:</label><input type="number" id="lab-w-cryo" value="${safeState.weapons.cryo}" min="0" max="5" step="1"></div>
-          <div class="lab-row"><label for="lab-w-pulse">Pulse:</label><input type="number" id="lab-w-pulse" value="${safeState.weapons.pulse}" min="0" max="5" step="1"></div>
-          <div class="lab-row"><label for="lab-w-emp">EMP:</label><input type="number" id="lab-w-emp" value="${safeState.weapons.emp}" min="0" max="5" step="1"></div>
-          <div class="lab-row"><label for="lab-w-swarm">Swarm:</label><input type="number" id="lab-w-swarm" value="${safeState.weapons.swarm}" min="0" max="5" step="1"></div>
-          <div class="lab-row"><label for="lab-w-barrier">Barrier:</label><input type="number" id="lab-w-barrier" value="${safeState.weapons.barrier}" min="0" max="5" step="1"></div>
-          <div class="lab-row"><label for="lab-w-arcblade">Arc Blade:</label><input type="number" id="lab-w-arcblade" value="${safeState.weapons.arcblade}" min="0" max="5" step="1"></div>
-          <div class="lab-label-sub">Passives (number of times applied)</div>
-          <div class="lab-row"><label for="lab-p-spd">Sprint (speed):</label><input type="number" id="lab-p-spd" value="${safeState.passives.spd}" min="0" max="5" step="1"></div>
-          <div class="lab-row"><label for="lab-p-dmg">Overclock (damage):</label><input type="number" id="lab-p-dmg" value="${safeState.passives.dmg}" min="0" max="5" step="1"></div>
-          <div class="lab-row"><label for="lab-p-mag">Magnet:</label><input type="number" id="lab-p-mag" value="${safeState.passives.mag}" min="0" max="5" step="1"></div>
-          <div class="lab-row"><label for="lab-p-hp">Nano-Repair (HP):</label><input type="number" id="lab-p-hp" value="${safeState.passives.hp}" min="0" max="5" step="1"></div>
-          <div class="lab-row"><label for="lab-p-dg">Ghost Step (dodge):</label><input type="number" id="lab-p-dg" value="${safeState.passives.dg}" min="0" max="5" step="1"></div>
-          <div class="lab-row"><label for="lab-p-rt">Overclock Fire:</label><input type="number" id="lab-p-rt" value="${safeState.passives.rt}" min="0" max="5" step="1"></div>
-          <div class="lab-label-sub">Player stats</div>
-          <div class="lab-row"><label for="lab-stat-hp">HP:</label><input type="number" id="lab-stat-hp" value="${safeState.stats.hp}" min="1" max="999" step="10"></div>
-          <div class="lab-row"><label for="lab-stat-level">Player level:</label><input type="number" id="lab-stat-level" value="${safeState.stats.level}" min="1" max="50" step="1"></div>
-          <button type="button" id="lab-apply-loadout">APPLY LOADOUT</button>
-          <div class="lab-hint">Applies instantly to current run. Start a run first.</div>
-        </div>
-        <div class="lab-section">
-          <div class="lab-label">// PRESETS //</div>
-          <button type="button" id="lab-preset-lategame">LATE GAME (5 min)</button>
-          <button type="button" id="lab-preset-bosstest">BOSS TEST</button>
-          <button type="button" id="lab-preset-maxweapon">MAX SINGLE WEAPON</button>
-        </div>
-      </section>
-      <div class="menu-actions">${actions}</div>
-      ${isRunActive ? '<div class="playtest-hint">Tap LAB or press L during a test run to reopen this panel.</div>' : ''}
-    </div>`;
-}
-
 function cl(v, a, b) { return Math.max(a, Math.min(b, v)); }
-function getXpTargetForLevel(level) {
-  let xpNext = 14;
-  for (let current = 1; current < Math.max(1, level); current++) {
-    xpNext = Math.floor(xpNext * 1.22);
-  }
-  return xpNext;
-}
-
-function getNextSurgeTime(time) {
-  return (Math.floor(Math.max(0, time) / 40) + 1) * 40;
-}
-
-function getLabNextBossTime(time) {
-  if (time < BOSS_SPAWN_TIME) return BOSS_SPAWN_TIME;
-  return time + 10;
-}
-
-function createPlaytestLabState() {
-  return {
-    timeSkipSeconds: 0,
-    surgeCount: 0,
-    weapons: Object.fromEntries(Object.keys(LAB_WEAPON_INPUTS).map(wid => [wid, 0])),
-    passives: Object.fromEntries(Object.keys(LAB_PASSIVE_INPUTS).map(pid => [pid, 0])),
-    stats: {
-      hp: 100,
-      level: 1,
-    },
-  };
-}
-
-const LAB_WEAPON_INPUTS = {
-  cryo: 'lab-w-cryo',
-  pulse: 'lab-w-pulse',
-  emp: 'lab-w-emp',
-  swarm: 'lab-w-swarm',
-  barrier: 'lab-w-barrier',
-  arcblade: 'lab-w-arcblade',
-};
-
-const LAB_PASSIVE_INPUTS = {
-  spd: 'lab-p-spd',
-  dmg: 'lab-p-dmg',
-  mag: 'lab-p-mag',
-  hp: 'lab-p-hp',
-  dg: 'lab-p-dg',
-  rt: 'lab-p-rt',
-};
-
-const PLAYTEST_LAB_PRESETS = {
-  lategame: {
-    'lab-timeskip': 300,
-    'lab-surgecount': 7,
-    'lab-w-cryo': 3,
-    'lab-w-pulse': 3,
-    'lab-w-emp': 2,
-    'lab-w-swarm': 0,
-    'lab-w-barrier': 0,
-    'lab-w-arcblade': 0,
-    'lab-p-dmg': 2,
-    'lab-p-spd': 1,
-    'lab-p-mag': 0,
-    'lab-p-hp': 0,
-    'lab-p-dg': 0,
-    'lab-p-rt': 1,
-    'lab-stat-hp': 160,
-    'lab-stat-level': 15,
-  },
-  bosstest: {
-    'lab-timeskip': 110,
-    'lab-surgecount': 2,
-    'lab-w-cryo': 3,
-    'lab-w-pulse': 2,
-    'lab-w-emp': 0,
-    'lab-w-swarm': 0,
-    'lab-w-barrier': 0,
-    'lab-w-arcblade': 0,
-    'lab-p-dmg': 1,
-    'lab-p-spd': 1,
-    'lab-p-mag': 0,
-    'lab-p-hp': 0,
-    'lab-p-dg': 0,
-    'lab-p-rt': 0,
-    'lab-stat-hp': 130,
-    'lab-stat-level': 8,
-  },
-  maxweapon: {
-    'lab-timeskip': 180,
-    'lab-surgecount': 4,
-    'lab-w-cryo': 5,
-    'lab-w-pulse': 0,
-    'lab-w-emp': 0,
-    'lab-w-swarm': 0,
-    'lab-w-barrier': 0,
-    'lab-w-arcblade': 0,
-    'lab-p-dmg': 3,
-    'lab-p-spd': 2,
-    'lab-p-mag': 0,
-    'lab-p-hp': 0,
-    'lab-p-dg': 0,
-    'lab-p-rt': 2,
-    'lab-stat-hp': 190,
-    'lab-stat-level': 12,
-  },
-};
-function getDiscAngle(discIndex, discCount, baseAngle) {
-  if (discCount === 1) return baseAngle;
-  if (discCount === 2) return discIndex === 0 ? baseAngle : baseAngle + Math.PI;
-  if (discCount === 3) return baseAngle + (discIndex / 3) * Math.PI * 2;
-  return baseAngle + (discIndex / discCount) * Math.PI * 2;
-}
-function pointToSegmentDistance(px, py, ax, ay, bx, by) {
-  const abx = bx - ax;
-  const aby = by - ay;
-  const abLenSq = abx * abx + aby * aby || 1;
-  const t = Math.max(0, Math.min(1, ((px - ax) * abx + (py - ay) * aby) / abLenSq));
-  const cx = ax + abx * t;
-  const cy = ay + aby * t;
-  const dx = px - cx;
-  const dy = py - cy;
-  return Math.sqrt(dx * dx + dy * dy);
-}
-function quadPoint(a, c, b, t) { return ((1 - t) * (1 - t) * a) + (2 * (1 - t) * t * c) + (t * t * b); }
-
-
 
