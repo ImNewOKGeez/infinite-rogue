@@ -47,7 +47,7 @@ export const ASCENSIONS = {
     {
       id: 'overload_round',
       name: 'OVERLOAD ROUND',
-      description: 'Every 3rd Pulse shot is an Overload Round - 5x damage, pierces all enemies, explosion radius doubled. Counter resets on death.',
+      description: 'Every 3rd Pulse shot becomes a white-hot overload shell: 5x damage, heavy pierce, a massive explosion on every hit, and a final cluster detonation when its run ends.',
     },
     {
       id: 'proximity_mine',
@@ -251,11 +251,11 @@ export const ASCENSION_TIER_DEFS = {
   overload_round: {
     weaponId: 'pulse',
     tiers: {
-      1: { procEvery: 3, damageMult: 5, radiusScale: 2.0, description: 'Every third Pulse shot becomes an Overload Round.' },
-      2: { procEvery: 3, damageMult: 6, radiusScale: 2.2, description: 'Overload Round damage and blast radius increase.' },
-      3: { procEvery: 3, damageMult: 7, radiusScale: 2.4, description: 'Overload Round grows even more explosive.' },
-      4: { procEvery: 2, damageMult: 7, radiusScale: 2.6, description: 'Overload Round now triggers every second Pulse shot.' },
-      5: { procEvery: 2, damageMult: 8, radiusScale: 3.0, description: 'Every second Pulse shot becomes a maximum-power Overload Round.' },
+      1: { procEvery: 3, damageMult: 5, pierce: 2, impactRadiusScale: 2.0, clusterRadiusScale: 1.25, description: 'Every third Pulse shot becomes an Overload Round: 5x damage, pierces 2 enemies, explodes on every hit, and cluster-bombs at the end of its path.' },
+      2: { procEvery: 3, damageMult: 5, pierce: 3, impactRadiusScale: 2.0, clusterRadiusScale: 1.25, description: 'Overload Round pierces 1 more enemy.' },
+      3: { procEvery: 3, damageMult: 5, pierce: 3, impactRadiusScale: 2.45, clusterRadiusScale: 1.55, description: 'Overload hit explosions and the final cluster detonation grow larger.' },
+      4: { procEvery: 3, damageMult: 5, pierce: 4, impactRadiusScale: 2.45, clusterRadiusScale: 1.55, description: 'Overload Round pierces 1 more enemy again.' },
+      5: { procEvery: 3, damageMult: 5, pierce: 4, impactRadiusScale: 2.9, clusterRadiusScale: 1.9, description: 'Overload hit explosions and the final cluster detonation reach maximum size.' },
     },
   },
   proximity_mine: {
@@ -766,13 +766,15 @@ export const WDEFS = {
         if (p._pulseOverloadCounter >= (overloadDef?.procEvery || 3)) {
           p._pulseOverloadCounter = 0;
           firePulseShell(p, a, dmg * (overloadDef?.damageMult || 5), lvl, {
-            radius: 14,
-            pierce: 999,
-            col: '#FFD56A',
+            radius: 16,
+            pierce: overloadDef?.pierce ?? 2,
+            col: '#FFF3B2',
             isOverload: true,
             meta: {
-              glowCol: '#FFE6A6',
-              overloadRadiusScale: overloadDef?.radiusScale || 2.0,
+              glowCol: '#FF6B1A',
+              overloadImpactRadiusScale: overloadDef?.impactRadiusScale || 2.0,
+              overloadClusterRadiusScale: overloadDef?.clusterRadiusScale || 1.25,
+              overloadFinalClusterOnly: true,
             },
           });
           return;
@@ -1179,10 +1181,11 @@ export function triggerPulseShockwave(e, dmg, onHitEnemy) {
 
 export function triggerPulseExplosion(game, bullet, x, y, onHitEnemy, onHitBoss) {
   const isChainReaction = !!(bullet.meta?.chainReaction || bullet.meta?.chainProc);
-  const effectColor = isChainReaction ? '#FF6A2A' : '#FFB627';
-  const burstColor = isChainReaction ? '#FFE3A0' : '#FFB627';
+  const isOverload = !!bullet.meta?.isOverload;
+  const effectColor = isOverload ? '#FF5A18' : isChainReaction ? '#FF6A2A' : '#FFB627';
+  const burstColor = isOverload ? '#FFF3B2' : isChainReaction ? '#FFE3A0' : '#FFB627';
   const radius = bullet.meta?.isOverload
-    ? 78 * (bullet.meta?.overloadRadiusScale || 2)
+    ? 78 * (bullet.meta?.overloadImpactRadiusScale || 2)
     : bullet.meta?.chainProc
       ? 117
       : bullet.meta?.isFragment
@@ -1191,16 +1194,24 @@ export function triggerPulseExplosion(game, bullet, x, y, onHitEnemy, onHitBoss)
   const splash = bullet.dmg * 0.65;
   const ringMr = bullet.meta?.isOverload ? radius * 2.5 : bullet.meta?.chainProc ? radius * 1.5 : radius;
   addRing(x, y, ringMr, effectColor, 2.8, 0.5);
-  addBurst(x, y, burstColor, 10, 95, 4, 0.45);
+  addBurst(x, y, burstColor, isOverload ? 16 : 10, isOverload ? 135 : 95, 4, 0.45);
+  if (isOverload) {
+    addRing(x, y, radius * 0.72, 'rgba(255,244,195,0.92)', 3.4, 0.22);
+    addRing(x, y, radius * 1.18, 'rgba(255,90,24,0.48)', 4.6, 0.28);
+    addBurst(x, y, '#7A2C00', 9, 90, 3.4, 0.32);
+  }
   if (bullet.meta?.isOverload && game) game.overloadFlash = Math.max(game.overloadFlash || 0, 0.15);
   if (bullet.meta?.chainProc && game) game.chainFlash = Math.max(game.chainFlash || 0, 0.1);
   applyPulseExplosionDamage(x, y, radius, splash, onHitEnemy, onHitBoss);
   const clusterGen = Math.max(0, bullet.meta?.clusterGen ?? getPulseClusterGeneration(bullet.meta?.pulseLvl || 1));
-  if (clusterGen > 0) {
+  const allowClusters = !(isOverload && bullet.meta?.overloadFinalClusterOnly) || !!bullet.meta?.overloadJourneyEnd;
+  if (clusterGen > 0 && allowClusters) {
     spawnPulseClusterBombs(x, y, bullet.dmg * 0.45, 1, clusterGen, {
       chainState: bullet.meta?.chainState || null,
       chainReaction: !!bullet.meta?.chainReaction,
       isChainProc: !!bullet.meta?.isChainProc,
+      overloadRound: isOverload,
+      overloadClusterRadiusScale: bullet.meta?.overloadClusterRadiusScale || 1,
     });
   }
 }
@@ -1226,6 +1237,8 @@ function spawnPulseClusterBombs(x, y, dmg, generation, maxGeneration, options = 
       chainState: options.chainState || null,
       chainReaction: !!options.chainReaction,
       isChainProc: !!options.isChainProc,
+      overloadRound: !!options.overloadRound,
+      overloadClusterRadiusScale: options.overloadClusterRadiusScale || 1,
     });
   }
 }
@@ -1245,10 +1258,14 @@ function updatePulseClusters(game, dt) {
     addDot(
       cluster.x,
       cluster.y,
-      cluster.chainReaction
+      cluster.overloadRound
+        ? (cluster.generation === 1 ? '#FFF3B2' : '#FF8A3A')
+        : cluster.chainReaction
         ? (cluster.generation === 1 ? '#FF6A2A' : '#FFE3A0')
         : (cluster.generation === 1 ? '#FFB627' : '#FFE4A3'),
-      cluster.generation === 1 ? 4 : 3,
+      cluster.overloadRound
+        ? (cluster.generation === 1 ? 5.2 : 4.1)
+        : (cluster.generation === 1 ? 4 : 3),
       0.12
     );
     if (cluster.life > 0) continue;
@@ -1259,12 +1276,17 @@ function updatePulseClusters(game, dt) {
 
 function detonatePulseCluster(cluster, game) {
   const radiusBase = cluster.generation === 1 ? 56 : 42;
-  const radius = radiusBase;
-  const color = cluster.chainReaction
+  const radius = radiusBase * (cluster.overloadClusterRadiusScale || 1);
+  const color = cluster.overloadRound
+    ? (cluster.generation === 1 ? '#FF8A3A' : '#FFF3B2')
+    : cluster.chainReaction
     ? (cluster.generation === 1 ? '#FF6A2A' : '#FFE3A0')
     : (cluster.generation === 1 ? '#FFB627' : '#FFE4A3');
   addRing(cluster.x, cluster.y, radius, color, 1.8, 0.35);
   addBurst(cluster.x, cluster.y, color, cluster.generation === 1 ? 6 : 4, 70, 2.8, 0.35);
+  if (cluster.overloadRound) {
+    addRing(cluster.x, cluster.y, radius * 1.2, 'rgba(255,90,24,0.45)', 3.8, 0.22);
+  }
   applyPulseExplosionDamage(
     cluster.x,
     cluster.y,
@@ -1284,6 +1306,8 @@ function detonatePulseCluster(cluster, game) {
         chainState: cluster.chainState,
         chainReaction: cluster.chainReaction,
         isChainProc: cluster.isChainProc,
+        overloadRound: cluster.overloadRound,
+        overloadClusterRadiusScale: cluster.overloadClusterRadiusScale,
       }
     );
   }

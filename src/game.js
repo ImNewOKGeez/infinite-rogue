@@ -1953,7 +1953,14 @@ export class Game {
     for (let i = bullets.length - 1; i >= 0; i--) {
       const b = bullets[i];
       b.x += b.vx * dt; b.y += b.vy * dt; b.life -= dt;
-      if (b.life < 0 || b.x < -80 || b.x > WORLD_W + 80 || b.y < -80 || b.y > WORLD_H + 80) { bullets.splice(i, 1); continue; }
+      if (b.life < 0 || b.x < -80 || b.x > WORLD_W + 80 || b.y < -80 || b.y > WORLD_H + 80) {
+        if (b.meta?.type === 'pulse' && b.meta?.isOverload) {
+          b.meta.overloadJourneyEnd = true;
+          this.handlePulseImpact(b, b.x, b.y);
+        }
+        bullets.splice(i, 1);
+        continue;
+      }
 
       // enemy bullets hit player
       if (b.enemy) {
@@ -1970,6 +1977,10 @@ export class Game {
         addDot(b.x, b.y, 'rgba(255,246,184,0.75)', 5.6, 0.22);
         addDot(b.x - b.vx * 0.012, b.y - b.vy * 0.012, 'rgba(255,205,92,0.42)', 3.8, 0.18);
       }
+      else if (b.meta?.isOverload) {
+        addDot(b.x, b.y, 'rgba(255,243,178,0.85)', 6.2, 0.24);
+        addDot(b.x - b.vx * 0.015, b.y - b.vy * 0.015, 'rgba(255,90,24,0.52)', 4.8, 0.2);
+      }
       else if (b.meta?.type === 'cryo' && hasAscension(this.P, 'cryo', 'cryo_storm')) {
         addDot(b.x, b.y, 'rgba(220,250,255,0.45)', 3.2, 0.18);
       } else if (b.meta?.type === 'cryo') addDot(b.x, b.y, b.meta?.projectileColor === '#007DCC' ? 'rgba(0,125,204,0.36)' : b.meta?.projectileColor === '#00B4FF' ? 'rgba(0,180,255,0.32)' : '#00CFFF44', 2.8, 0.16);
@@ -1984,7 +1995,9 @@ export class Game {
         this._doBossHit(dmg, b.col, false);
         if (b.meta?.type === 'cryo') handleCryoImpact(this, b, this.boss, b.x, b.y, true);
         if (b.meta?.type === 'pulse') {
+          if (b.meta?.isOverload) b.meta.overloadJourneyEnd = ((b.pl || 0) - 1) < 0;
           this.handlePulseImpact(b, b.x, b.y);
+          if (b.meta?.isOverload) b.meta.overloadJourneyEnd = false;
         }
         if (!b.meta?.multiHit) b.hitBoss = true;
         if (!b.meta?.multiHit) b.pl = (b.pl || 0) - 1;
@@ -2003,7 +2016,9 @@ export class Game {
             this.hitEnemy(e, dmg, b.col, false, null, false, true);
             if (b.meta?.type === 'cryo') handleCryoImpact(this, b, e, e.x, e.y, false);
             if (b.meta?.type === 'pulse') {
+              if (b.meta?.isOverload) b.meta.overloadJourneyEnd = ((b.pl || 0) - 1) < 0;
               this.handlePulseImpact(b, e.x, e.y);
+              if (b.meta?.isOverload) b.meta.overloadJourneyEnd = false;
             }
             if (!b.meta?.multiHit) b.hitIds?.add(e.id);
             if (!b.meta?.multiHit) b.pl = (b.pl || 0) - 1;
@@ -4015,9 +4030,9 @@ export class Game {
 
       const tier = b.meta?.tier || 1;
       const glow = b.meta?.glowCol || (b.meta?.type === 'cryo' ? '#9af3ff' : b.meta?.type === 'pulse' ? '#ffd16f' : b.col);
-      const drawR = b.meta?.isOverload ? 20 : b.meta?.type === 'cryo' ? b.r : b.r + (tier >= 2 ? 1 : 0) + (b.meta?.type === 'pulse' && tier >= 2 ? 1 : 0);
+      const drawR = b.meta?.isOverload ? 24 : b.meta?.type === 'cryo' ? b.r : b.r + (tier >= 2 ? 1 : 0) + (b.meta?.type === 'pulse' && tier >= 2 ? 1 : 0);
       ctx.shadowColor = glow;
-      ctx.shadowBlur = ultraMode ? 0 : (b.meta?.isOverload ? 30 : 10 + tier * 2);
+      ctx.shadowBlur = ultraMode ? 0 : (b.meta?.isOverload ? 42 : 10 + tier * 2);
       ctx.fillStyle = b.col;
       ctx.beginPath();
       ctx.arc(b.x, b.y, drawR, 0, Math.PI * 2);
@@ -4039,11 +4054,22 @@ export class Game {
       }
       if (!ultraMode && b.meta?.isOverload) {
         ctx.save();
-        ctx.globalAlpha = 0.5;
-        ctx.strokeStyle = '#FFB627';
-        ctx.lineWidth = 2;
+        ctx.globalAlpha = 0.72;
+        ctx.strokeStyle = '#FF5A18';
+        ctx.lineWidth = 2.8;
         ctx.beginPath();
-        ctx.arc(b.x, b.y, b.r + 8, 0, Math.PI * 2);
+        ctx.arc(b.x, b.y, b.r + 10, 0, Math.PI * 2);
+        ctx.stroke();
+        ctx.strokeStyle = 'rgba(255,248,214,0.95)';
+        ctx.lineWidth = 1.6;
+        ctx.beginPath();
+        ctx.arc(b.x, b.y, b.r + 5.5, 0, Math.PI * 2);
+        ctx.stroke();
+        ctx.strokeStyle = 'rgba(122,44,0,0.6)';
+        ctx.lineWidth = 5;
+        ctx.beginPath();
+        ctx.moveTo(b.x - b.vx * 0.028, b.y - b.vy * 0.028);
+        ctx.lineTo(b.x + b.vx * 0.01, b.y + b.vy * 0.01);
         ctx.stroke();
         ctx.restore();
       }
