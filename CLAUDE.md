@@ -260,7 +260,7 @@ The live weapon system is simple and numeric right now:
 - `cryo_nova`: frozen kills detonate for 80% of the dead enemy's max HP in a 150px radius, seed freeze buildup on survivors, and use a shortened white-plus-cyan ring pulse with a brief cyan screen flash.
 - `overload`: Cryo now counts volleys toward Overload; every third Cryo volley overloads part of the 5-shot spread into double-damage piercing projectiles, scaling from 1 empowered shot at T1 to all 5 at T5.
 - `frost_field`: nearby enemies are slowed immediately, freeze after 1.5s of continuous exposure, and take base damage at `P.dmg * 5` per second so the aura always contributes noticeable chip pressure.
-- `shatter`: frozen enemies can still shatter instantly, but no longer trigger any screen flash.
+- `shatter`: frozen enemies now gain a brittle crystal-fracture overlay so the Ascension reads differently from base Cryo, any hit can instantly shatter them with a chance that scales from freeze start down to zero before thaw, and Cryo projectile pierce rises by `+1` each tier (`2/3/4/5/6` total pierce).
 - `ASCENSIONS.cryo` currently defines `cryo_storm`, `permafrost`, `cryo_nova`, `overload`, `frost_field`, and `shatter`.
 
 #### Pulse
@@ -271,6 +271,7 @@ The live weapon system is simple and numeric right now:
 - Level 5: cluster chain extends to four total generations.
 - Frozen-target bonus damage logic is wired, but depends on freeze being active.
 - All live Pulse Ascensions now continue from `T1` to `T5`, scaling their existing behavior through stronger proc rates, pull strength, overload cadence, mine stockpile/blast size, or fragment count/blast size.
+- `chain_reaction`: uses a hotter orange-red projectile/explosion treatment than base Pulse, fires 2 shells at `T1-T2` with the second shot opposite the main target line, upgrades to `3` evenly split shells at `T3-T4`, and `4` evenly split shells at `T5`, always keeping one shell aimed at the closest enemy while cluster-bomb retrigger chance steps from `35%` at `T1`, to `40%` at `T2-T3`, and `45%` at `T4-T5`.
 - `overload_round`: every third Pulse shot becomes the overloaded shell; the HUD tracks the live 3-shot counter.
 
 #### EMP
@@ -581,10 +582,12 @@ scripts/
 5. Keep moving gameplay systems toward easier future content addition.
 
 ## Changelog
+- 2026-04-14: Retuned Pulse Chain Reaction to the intended Ascension tier curve so it now uses a distinct hotter orange-red projectile/explosion visual, fires `2/2/3/3/4` evenly split shells from `T1-T5` with one shell always aimed at the closest enemy, and raises cluster-bomb retrigger chance only at `T2` and `T4` (`35/40/40/45/45%`).
 - 2026-04-13: Retuned Cryo Storm to match the intended Ascension tiers: frozen kills now emit evenly spaced shard bursts at `3/5/7/9/11` shards from `T1` to `T5`, replacing the old frozen-hit proc and denser shard-count progression.
 - 2026-04-13: Added Ascension tier progression for all live Ascensions so transformed weapons now continue from T1 to T5 via normal upgrade drafts, with per-Ascension scaling hooked into combat, HUD `A1-A5` slot tags, playtest-lab tier controls, and death-summary Ascension tier readouts.
 - 2026-04-13: Refined Permafrost's tier path into a heavy snowball progression: `T1-T2` fire one large projectile, `T3-T4` fire two, `T5` fires three, while keeping the darker-blue weighted projectile profile and swapping the default Cryo shot into a deeper thudding Permafrost fire sound.
 - 2026-04-13: Tuned Permafrost's snowball profile further by increasing projectile size sharply, reducing its fire rate again, and changing tier pierce to `2/4/6/8/10` so each Ascension tier adds 2 more pierce.
+- 2026-04-14: Retuned Shatter to the intended `T1-T5` curve so frozen enemies now start at `15/20/25/30/35%` instant-kill chance and decay to `0%` by thaw, added a brittle crystal-fracture overlay so the Ascension reads clearly apart from normal Cryo, and made Cryo projectile pierce rise by `+1` each tier (`2/3/4/5/6` total pierce).
 - 2026-04-14: Reverted Permafrost projectile size and speed back to normal Cryo / T5 Cryo values while keeping the darker projectile color, higher pierce table, multi-projectile tier progression, deeper fire sound, and nearby freeze spread behavior.
 - 2026-04-14: Fixed Juggernauts so they are now fully immune to freeze as intended, matching their existing immunity to slow, stun, and knockback.
 - 2026-04-14: Changed Permafrost's on-hit freeze so it now scales with enemy size instead of always forcing a full freeze threshold; small enemies can still freeze quickly, while larger enemies like Brutes and Titans now require multiple hits.
