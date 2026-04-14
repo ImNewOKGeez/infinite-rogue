@@ -3389,19 +3389,39 @@ export class Game {
     if (!this.P?._pulseMines) return;
     const { ctx } = this;
     this.P._pulseMines.forEach(mine => {
-      ctx.strokeStyle = mine.armed ? '#FFB627' : '#FFB62766';
-      ctx.lineWidth = mine.armed ? 2 : 1;
-      ctx.fillStyle = mine.armed ? '#FFB62722' : '#FFB62711';
+      const isScatterMine = !!mine.isScatterMine;
+      const stroke = isScatterMine
+        ? (mine.armed ? '#FFE7A3' : '#FFE7A366')
+        : (mine.armed ? '#FFB627' : '#FFB62766');
+      const fill = isScatterMine
+        ? (mine.armed ? '#FFF4C933' : '#FFF4C916')
+        : (mine.armed ? '#FFB62722' : '#FFB62711');
+      ctx.strokeStyle = stroke;
+      ctx.lineWidth = mine.armed ? (isScatterMine ? 1.5 : 2) : 1;
+      ctx.fillStyle = fill;
       ctx.beginPath();
       ctx.arc(mine.x, mine.y, mine.r, 0, Math.PI * 2);
       ctx.fill();
       ctx.stroke();
+      if (isScatterMine) {
+        const coreR = Math.max(1.8, mine.r * 0.24);
+        ctx.fillStyle = mine.armed ? '#FFF9E0' : '#FFF9E088';
+        ctx.beginPath();
+        ctx.moveTo(mine.x, mine.y - coreR);
+        ctx.lineTo(mine.x + coreR, mine.y);
+        ctx.lineTo(mine.x, mine.y + coreR);
+        ctx.lineTo(mine.x - coreR, mine.y);
+        ctx.closePath();
+        ctx.fill();
+      }
       if (mine.armed) {
         const pulse = 0.5 + 0.5 * Math.sin(this.gt * 4);
-        ctx.strokeStyle = `rgba(255, 182, 39, ${pulse * 0.4})`;
+        ctx.strokeStyle = isScatterMine
+          ? `rgba(255, 240, 190, ${pulse * 0.45})`
+          : `rgba(255, 182, 39, ${pulse * 0.4})`;
         ctx.lineWidth = 1;
         ctx.beginPath();
-        ctx.arc(mine.x, mine.y, mine.r + 6, 0, Math.PI * 2);
+        ctx.arc(mine.x, mine.y, mine.r + (isScatterMine ? 4 : 6), 0, Math.PI * 2);
         ctx.stroke();
       }
     });
