@@ -634,9 +634,9 @@ export const WDEFS = {
           p.y,
           Math.cos(angle) * projectileSpeed,
           Math.sin(angle) * projectileSpeed,
-          isOverloadShot ? projectileRadius + 1 : projectileRadius,
+          isOverloadShot ? projectileRadius + 2 : projectileRadius,
           isOverloadShot ? dmg * (overloadDef?.damageMult || 2) : dmg,
-          isOverloadShot ? '#E8FCFF' : projectileColor,
+          isOverloadShot ? '#FFF6B8' : projectileColor,
           2.2,
           {
             type: 'cryo',
@@ -645,7 +645,7 @@ export const WDEFS = {
             pierce: isOverloadShot ? (overloadDef?.pierce ?? projectilePierce) : projectilePierce,
             freeze: freezeOnHit,
             permafrostFreeze: freezeOnHit,
-            projectileColor: isOverloadShot ? '#E8FCFF' : projectileColor,
+            projectileColor: isOverloadShot ? '#FFF6B8' : projectileColor,
             isCryoOverload: isOverloadShot,
           }
         );

@@ -1983,6 +1983,10 @@ export class Game {
 
       // player bullets — check boss first, then enemies
       if (b.meta?.isCryoShard) addDot(b.x, b.y, 'rgba(184,247,255,0.55)', 3.6, 0.2);
+      else if (b.meta?.isCryoOverload) {
+        addDot(b.x, b.y, 'rgba(255,246,184,0.75)', 5.6, 0.22);
+        addDot(b.x - b.vx * 0.012, b.y - b.vy * 0.012, 'rgba(255,205,92,0.42)', 3.8, 0.18);
+      }
       else if (b.meta?.type === 'cryo' && hasAscension(this.P, 'cryo', 'cryo_storm')) {
         addDot(b.x, b.y, 'rgba(220,250,255,0.45)', 3.2, 0.18);
       } else if (b.meta?.type === 'cryo') addDot(b.x, b.y, b.meta?.projectileColor === '#007DCC' ? 'rgba(0,125,204,0.36)' : b.meta?.projectileColor === '#00B4FF' ? 'rgba(0,180,255,0.32)' : '#00CFFF44', 2.8, 0.16);
@@ -3836,6 +3840,41 @@ export class Game {
         ctx.moveTo(-2.5, 4.5);
         ctx.lineTo(2.5, -4.5);
         ctx.stroke();
+        ctx.restore();
+        return;
+      }
+
+      if (b.meta?.isCryoOverload) {
+        const angle = Math.atan2(b.vy, b.vx);
+        const tailX = b.x - Math.cos(angle) * 16;
+        const tailY = b.y - Math.sin(angle) * 16;
+        ctx.save();
+        ctx.shadowColor = '#FFE98A';
+        ctx.shadowBlur = ultraMode ? 0 : 26;
+        ctx.strokeStyle = 'rgba(255,214,96,0.95)';
+        ctx.lineWidth = 4;
+        ctx.beginPath();
+        ctx.moveTo(tailX, tailY);
+        ctx.lineTo(b.x, b.y);
+        ctx.stroke();
+        ctx.fillStyle = '#FFF6B8';
+        ctx.beginPath();
+        ctx.arc(b.x, b.y, b.r + 1.5, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.strokeStyle = '#FFFFFF';
+        ctx.lineWidth = 2;
+        ctx.beginPath();
+        ctx.arc(b.x, b.y, b.r + 4.5, 0, Math.PI * 2);
+        ctx.stroke();
+        ctx.strokeStyle = 'rgba(255,192,64,0.95)';
+        ctx.lineWidth = 1.6;
+        ctx.beginPath();
+        ctx.moveTo(b.x - 7, b.y);
+        ctx.lineTo(b.x + 7, b.y);
+        ctx.moveTo(b.x, b.y - 7);
+        ctx.lineTo(b.x, b.y + 7);
+        ctx.stroke();
+        ctx.shadowBlur = 0;
         ctx.restore();
         return;
       }
