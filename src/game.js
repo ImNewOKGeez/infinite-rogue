@@ -1427,8 +1427,10 @@ export class Game {
       e._pullTimer = collapseDef?.pullTime || 0.3;
       e._pullSpeed = collapseDef?.pullSpeed || 400;
     });
-    addBurst(x, y, '#FFB627', 12, 110, 2.4, 0.28);
-    addRing(x, y, pullRadius, 'rgba(255,182,39,0.4)', 1.8, 0.18);
+    addBurst(x, y, '#FFF0A8', 14, 125, 2.8, 0.3);
+    addRing(x, y, Math.max(24, pullRadius * 0.32), 'rgba(255,248,210,0.85)', 2.4, 0.14);
+    addRing(x, y, pullRadius, 'rgba(255,231,122,0.55)', 2.6, 0.22);
+    addRing(x, y, pullRadius * 0.72, 'rgba(80,40,0,0.35)', 5.5, 0.16);
   }
 
   handlePulseImpact(bullet, x, y) {
@@ -3966,6 +3968,45 @@ export class Game {
           ctx.beginPath();
           ctx.moveTo(-10, 0);
           ctx.lineTo(-2, 0);
+          ctx.stroke();
+        }
+        ctx.restore();
+        return;
+      }
+
+      if (b.meta?.type === 'pulse' && b.meta?.collapsedRound && !b.meta?.isOverload) {
+        const angle = Math.atan2(b.vy, b.vx);
+        ctx.save();
+        ctx.translate(b.x, b.y);
+        ctx.rotate(angle);
+        ctx.shadowColor = '#FFF2AA';
+        ctx.shadowBlur = ultraMode ? 0 : 24;
+        ctx.fillStyle = '#FFF0A8';
+        ctx.beginPath();
+        ctx.moveTo(11, 0);
+        ctx.lineTo(2, 7.5);
+        ctx.lineTo(-8.5, 0);
+        ctx.lineTo(2, -7.5);
+        ctx.closePath();
+        ctx.fill();
+        ctx.fillStyle = '#3A2000';
+        ctx.beginPath();
+        ctx.arc(-1, 0, 3.2, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.strokeStyle = 'rgba(255,255,255,0.9)';
+        ctx.lineWidth = 1.2;
+        ctx.beginPath();
+        ctx.moveTo(-9, 0);
+        ctx.lineTo(7, 0);
+        ctx.stroke();
+        if (!ultraMode) {
+          ctx.strokeStyle = 'rgba(255,231,122,0.9)';
+          ctx.lineWidth = 2;
+          ctx.beginPath();
+          ctx.arc(-1, 0, 6.4, -1.2, 1.2);
+          ctx.stroke();
+          ctx.beginPath();
+          ctx.arc(-1, 0, 6.4, Math.PI - 1.2, Math.PI + 1.2);
           ctx.stroke();
         }
         ctx.restore();

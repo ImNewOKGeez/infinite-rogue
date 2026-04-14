@@ -42,7 +42,7 @@ export const ASCENSIONS = {
     {
       id: 'collapsed_round',
       name: 'COLLAPSED ROUND',
-      description: 'Pulse shells pull all enemies within 180px sharply toward the impact point for 0.3 seconds before the explosion fires. Cluster chain follows as normal.',
+      description: 'Pulse condenses into a brighter gravity shell that drags enemies into the impact point before the cluster chain detonates. Higher tiers add wider pull and extra shells.',
     },
     {
       id: 'overload_round',
@@ -241,11 +241,11 @@ export const ASCENSION_TIER_DEFS = {
   collapsed_round: {
     weaponId: 'pulse',
     tiers: {
-      1: { pullRadius: 180, pullTime: 0.3, pullSpeed: 400, description: 'Pulse impacts pull enemies inward before exploding.' },
-      2: { pullRadius: 200, pullTime: 0.32, pullSpeed: 450, description: 'Collapsed Round pulls from slightly farther out.' },
-      3: { pullRadius: 220, pullTime: 0.34, pullSpeed: 520, description: 'Collapsed Round pulls harder and longer.' },
-      4: { pullRadius: 240, pullTime: 0.36, pullSpeed: 590, description: 'Collapsed Round becomes a stronger vacuum detonation.' },
-      5: { pullRadius: 260, pullTime: 0.4, pullSpeed: 660, description: 'Collapsed Round reaches maximum pull radius and strength.' },
+      1: { projectileCount: 1, pullRadius: 180, pullTime: 0.3, pullSpeed: 400, description: 'Fire one Collapsed Round that pulls enemies inward before the cluster chain detonates.' },
+      2: { projectileCount: 1, pullRadius: 220, pullTime: 0.3, pullSpeed: 400, description: 'Collapsed Round keeps the single shell and increases its pull radius.' },
+      3: { projectileCount: 2, pullRadius: 220, pullTime: 0.3, pullSpeed: 400, description: 'Collapsed Round fires a second shell in the opposite direction while keeping the wider pull radius.' },
+      4: { projectileCount: 2, pullRadius: 260, pullTime: 0.3, pullSpeed: 400, description: 'Collapsed Round keeps the two-shell split and increases pull radius again.' },
+      5: { projectileCount: 3, pullRadius: 260, pullTime: 0.3, pullSpeed: 400, description: 'Collapsed Round fires 3 shells with one aimed at the closest enemy and the others evenly split around it.' },
     },
   },
   overload_round: {
@@ -605,6 +605,23 @@ function fireChainReactionVolley(p, angle, dmg, lvl, chainDef) {
   }
 }
 
+function fireCollapsedRoundVolley(p, angle, dmg, lvl, collapseDef) {
+  const projectileCount = Math.max(1, collapseDef?.projectileCount || 1);
+  const sharedMeta = {
+    collapsedRound: true,
+    glowCol: '#FFF2AA',
+  };
+
+  for (let i = 0; i < projectileCount; i++) {
+    const shotAngle = angle + (Math.PI * 2 * i) / projectileCount;
+    firePulseShell(p, shotAngle, dmg, lvl, {
+      col: '#FFE77A',
+      radius: 10,
+      meta: sharedMeta,
+    });
+  }
+}
+
 export const WDEFS = {
   cryo: {
     id: 'cryo', name: 'CRYO', icon: '❄', col: '#00CFFF',
@@ -767,6 +784,14 @@ export const WDEFS = {
         const primaryTarget = getClosestEnemyToPoint(p.x, p.y) || t;
         const chainAngle = Math.atan2(primaryTarget.y - p.y, primaryTarget.x - p.x);
         fireChainReactionVolley(p, chainAngle, dmg, lvl, chainDef);
+        return;
+      }
+
+      if (ascension === 'collapsed_round') {
+        const collapseDef = ascensionTier?.definition;
+        const primaryTarget = getClosestEnemyToPoint(p.x, p.y) || t;
+        const collapseAngle = Math.atan2(primaryTarget.y - p.y, primaryTarget.x - p.x);
+        fireCollapsedRoundVolley(p, collapseAngle, dmg, lvl, collapseDef);
         return;
       }
 

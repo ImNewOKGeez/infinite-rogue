@@ -18,6 +18,12 @@ EVERY UPDATE:
 
 ## Git workflow for future sessions
 - Before suggesting any Git command, inspect the repo state first with `git status --short --branch` and tailor the recommendation to the actual situation.
+- This is a required step, not optional: after any session that changes files, checks files, or leaves the repo in a different Git state, end the response with a `Git next step` section.
+- The `Git next step` section must include:
+  - the exact command the user should run next
+  - a one-sentence beginner-friendly explanation of what that command does
+  - if there are multiple required commands, show them in the exact order to run them
+- Explain Git actions as if the user is a beginner. Use plain language, avoid jargon when possible, and briefly define terms like branch, commit, push, and pull when they matter.
 - Default workflow for new work: start from updated `main`, create a short-lived branch, make the change, verify the project, commit, push, then open a Pull Request into `main`.
 - Preferred command flow for a normal change:
   - `git checkout main`
@@ -31,7 +37,8 @@ EVERY UPDATE:
 - If the branch is ahead of origin with no uncommitted files, recommend `git push` or `git push origin <branch>` next.
 - If the branch is behind origin, recommend pulling and explain whether `git pull --rebase` or a normal `git pull` is safer for the current state.
 - If the user already committed on `main`, do not shame them; explain that it is acceptable for a personal project, then recommend the safest next step for the current state and suggest using branches for the next change.
-- When a session finishes code changes, include a short "Git next step" note telling the user the exact command they should run next, based on the live repo state.
+- Never finish a coding session without checking the live Git state first and giving the user the next Git command to run.
+- If the repo is already clean and synced, still include `Git next step: no Git command needed right now` so the user is not left guessing.
 
 # Infinite Rogue - Project Operating Brief
 
@@ -270,8 +277,9 @@ The live weapon system is simple and numeric right now:
 - Level 4: cluster chain extends another generation.
 - Level 5: cluster chain extends to four total generations.
 - Frozen-target bonus damage logic is wired, but depends on freeze being active.
-- All live Pulse Ascensions now continue from `T1` to `T5`, scaling their existing behavior through stronger proc rates, pull strength, overload cadence, mine stockpile/blast size, or fragment count/blast size.
+- All live Pulse Ascensions now continue from `T1` to `T5`, scaling their existing behavior through stronger proc rates, wider pull plus extra shells, overload cadence, mine stockpile/blast size, or fragment count/blast size.
 - `chain_reaction`: uses a hotter orange-red projectile/explosion treatment than base Pulse, fires 2 shells at `T1-T2` with the second shot opposite the main target line, upgrades to `3` evenly split shells at `T3-T4`, and `4` evenly split shells at `T5`, always keeping one shell aimed at the closest enemy while cluster-bomb retrigger chance steps from `35%` at `T1`, to `40%` at `T2-T3`, and `45%` at `T4-T5`.
+- `collapsed_round`: now uses a brighter gravity-shell treatment than base Pulse so the Ascension reads clearly in combat, fires `1/1/2/2/3` shells from `T1-T5`, keeps one shell aimed at the closest enemy, adds the opposite-direction shell at `T3-T4`, and reaches a three-way evenly split volley at `T5`; pull radius increases only at `T2` and `T4`, while each shell still pulls enemies inward before the normal cluster chain detonates.
 - `overload_round`: every third Pulse shot becomes the overloaded shell; the HUD tracks the live 3-shot counter.
 
 #### EMP
@@ -582,6 +590,7 @@ scripts/
 5. Keep moving gameplay systems toward easier future content addition.
 
 ## Changelog
+- 2026-04-14: Retuned Pulse Collapsed Round to the intended Ascension tier curve so it now uses a distinct brighter gravity-shell visual, fires `1/1/2/2/3` shells from `T1-T5` with one shell always aimed at the closest enemy, adds the opposite-direction shell at `T3-T4`, and raises pull radius only at `T2` and `T4` while preserving the delayed pull-then-cluster payoff.
 - 2026-04-14: Retuned Pulse Chain Reaction to the intended Ascension tier curve so it now uses a distinct hotter orange-red projectile/explosion visual, fires `2/2/3/3/4` evenly split shells from `T1-T5` with one shell always aimed at the closest enemy, and raises cluster-bomb retrigger chance only at `T2` and `T4` (`35/40/40/45/45%`).
 - 2026-04-13: Retuned Cryo Storm to match the intended Ascension tiers: frozen kills now emit evenly spaced shard bursts at `3/5/7/9/11` shards from `T1` to `T5`, replacing the old frozen-hit proc and denser shard-count progression.
 - 2026-04-13: Added Ascension tier progression for all live Ascensions so transformed weapons now continue from T1 to T5 via normal upgrade drafts, with per-Ascension scaling hooked into combat, HUD `A1-A5` slot tags, playtest-lab tier controls, and death-summary Ascension tier readouts.
