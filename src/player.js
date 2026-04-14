@@ -40,6 +40,7 @@ export function hasAscension(p, weaponId, ascensionId) {
 
 export function normalizeAscensionId(weaponId, ascensionId) {
   if (weaponId === 'cryo' && ascensionId === 'glacial_lance') return 'overload';
+  if (weaponId === 'cryo' && ascensionId === 'cryo_nova') return null;
   return ascensionId || null;
 }
 

@@ -18,11 +18,6 @@ export const ASCENSIONS = {
       description: 'Frozen enemies never thaw. They remain frozen until killed. High burst damage required.',
     },
     {
-      id: 'cryo_nova',
-      name: 'CRYO NOVA',
-      description: 'Frozen enemies that die explode for 80% max-HP damage in a 150px ice nova and seed freeze buildup on survivors.',
-    },
-    {
       id: 'overload',
       name: 'OVERLOAD',
       description: 'Every third Cryo volley overloads part of the 5-shot spread into double-damage piercing shots.',
@@ -201,16 +196,6 @@ export const ASCENSION_TIER_DEFS = {
         spreadFreezePct: 0.35,
         description: 'Permafrost now fires 5 heavy shots. Freeze spread reaches its fastest rate and Cryo pierce increases to 5.',
       },
-    },
-  },
-  cryo_nova: {
-    weaponId: 'cryo',
-    tiers: {
-      1: { novaRadius: 150, novaDamageMult: 0.8, freezeSeed: 2.0, description: 'Frozen kills detonate for 80% max-HP damage in a 150px nova.' },
-      2: { novaRadius: 170, novaDamageMult: 0.85, freezeSeed: 2.1, description: 'Nova radius and damage increase slightly.' },
-      3: { novaRadius: 190, novaDamageMult: 0.9, freezeSeed: 2.3, description: 'Nova reaches farther and seeds more freeze.' },
-      4: { novaRadius: 210, novaDamageMult: 0.95, freezeSeed: 2.5, description: 'Nova becomes a larger, harder-hitting ice blast.' },
-      5: { novaRadius: 230, novaDamageMult: 1.0, freezeSeed: 2.8, description: 'Nova peaks at full max-HP damage with the largest freeze spread.' },
     },
   },
   overload: {

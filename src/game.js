@@ -1896,28 +1896,6 @@ export class Game {
     }
   }
 
-  _triggerCryoNova(enemy) {
-    if (!hasAscension(this.P, 'cryo', 'cryo_nova')) return;
-    const novaDef = getAscensionTierData(this.P, 'cryo')?.definition;
-
-    const novaRadius = novaDef?.novaRadius || 150;
-    const novaDamage = (enemy.maxHp || 0) * (novaDef?.novaDamageMult || 0.8);
-    addRing(enemy.x, enemy.y, 80, '#FFFFFF', 2, 0.25);
-    addRing(enemy.x, enemy.y, novaRadius, '#00CFFF', 1.5, 0.3);
-    addBurst(enemy.x, enemy.y, '#AAFFFF', 20, 140, 3.5, 0.5);
-    this._screenFlash = { col: '#00CFFF', alpha: 0.08, life: 0.15, maxLife: 0.15 };
-
-    enemies.forEach(target => {
-      if (target === enemy || target.hp <= 0) return;
-      const dx = target.x - enemy.x;
-      const dy = target.y - enemy.y;
-      if (dx * dx + dy * dy > novaRadius * novaRadius) return;
-      this.hitEnemy(target, novaDamage, '#00CFFF', true);
-      if (target.hp > 0) applyFreezeMeter(target, novaDef?.freezeSeed || 2.0);
-    });
-    playNovaDetonationSound();
-  }
-
   _maybeApplyShatter(enemy) {
     if (!hasAscension(this.P, 'cryo', 'shatter')) return false;
     if (!enemy?.frozen || enemy.isBoss) return false;
@@ -2290,7 +2268,6 @@ export class Game {
       this.killsByType[e.type]++;
       const xpVal = (this.P.char === 'hacker' && e.stunned) ? e.xp * 2 : e.xp;
       if (e.frozen) this._triggerCryoStorm(e);
-      if (e.frozen) this._triggerCryoNova(e);
       e.permafrost = false;
       this._dropEnemyPickups(e, xpVal);
       this.spawnDeath(e.x, e.y, e.col, e.frozen, e.shattered);
