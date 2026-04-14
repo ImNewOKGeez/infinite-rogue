@@ -1,4 +1,4 @@
-import { CHARACTERS, getAscensionTier, getOwnedWeaponIds, getWeaponLevel } from './player.js';
+import { CHARACTERS, getAscension, getAscensionTier, getOwnedWeaponIds, getWeaponLevel } from './player.js';
 import { getSave, SYNERGIES, isDiscovered, getRatingTier, RATING_COLORS } from './progression.js';
 import { WDEFS } from './weapons.js';
 import { playUIClick } from './audio.js';
@@ -108,12 +108,12 @@ export function updateHUD(P, gt, WDEFS) {
       const weaponLevel = getWeaponLevel(P, wid);
       const isPulseOverload = wids[i] === 'pulse' && P.ascensions?.pulse === 'overload_round';
       const overloadCounter = isPulseOverload ? Math.max(0, Math.min(2, P._pulseOverloadCounter || 0)) : 0;
-      const isGlacialLance = wids[i] === 'cryo' && P.ascensions?.cryo === 'glacial_lance';
-      const lanceCounter = isGlacialLance ? Math.max(0, Math.min(2, P._lanceCounter || 0)) : 0;
+      const isCryoOverload = wids[i] === 'cryo' && getAscension(P, 'cryo') === 'overload';
+      const cryoOverloadCounter = isCryoOverload ? Math.max(0, Math.min(2, P._cryoOverloadCounter || 0)) : 0;
       const overloadGlow = isPulseOverload && overloadCounter === 2
         ? 'box-shadow:0 0 0 1px rgba(255,182,39,0.9), 0 0 14px rgba(255,182,39,0.55), inset 0 0 14px rgba(255,182,39,0.18);'
         : '';
-      const lanceGlow = isGlacialLance && lanceCounter === 2
+      const cryoOverloadGlow = isCryoOverload && cryoOverloadCounter === 2
         ? 'box-shadow:0 0 0 1px rgba(0,207,255,0.95), 0 0 14px rgba(0,207,255,0.55), inset 0 0 14px rgba(0,207,255,0.18);'
         : '';
       const dots = Array.from({ length: 5 }, (_, idx) => {
@@ -128,22 +128,22 @@ export function updateHUD(P, gt, WDEFS) {
           }).join('')}
         </div>
       ` : '';
-      const lanceDots = isGlacialLance ? `
+      const cryoOverloadDots = isCryoOverload ? `
         <div style="display:flex;justify-content:center;gap:6px;margin-top:5px;min-height:8px">
           ${Array.from({ length: 3 }, (_, idx) => {
-            const filled = idx < lanceCounter;
+            const filled = idx < cryoOverloadCounter;
             return `<span style="width:8px;height:8px;border-radius:999px;display:block;background:${filled ? '#00CFFF' : '#00CFFF33'}"></span>`;
           }).join('')}
         </div>
       ` : '';
       el.className = 'ws on';
-      el.style.cssText = overloadGlow || lanceGlow;
+      el.style.cssText = overloadGlow || cryoOverloadGlow;
       el.innerHTML = `
         <div class="wi" style="color:${w.col}">${w.icon}</div>
         <div class="wn" style="color:${w.col}">${w.name}</div>
         ${ascended ? `<div class="wasc">A${ascensionTier || 1}</div>` : `<div class="wdots">${dots}</div>`}
         ${overloadDots}
-        ${lanceDots}
+        ${cryoOverloadDots}
       `;
     } else {
       el.className = 'ws';

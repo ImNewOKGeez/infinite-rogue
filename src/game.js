@@ -28,7 +28,7 @@ import { hexToRgba, brightenHexColor, traceEnemyShape } from './renderUtils.js';
 import {
   initAudio, resumeAudio,
   playEMPSound,
-  playCryoFire, playPermafrostFire, playCryoStormSound, playGlacialLanceSound, playPulseFire, playCascadeSound, playTriplePulseSound, playArcSound,
+  playCryoFire, playPermafrostFire, playCryoStormSound, playPulseFire, playCascadeSound, playTriplePulseSound, playArcSound,
   playArcBladeSound,
   playMolotovThrowSound, playMolotovLandSound,
   playBarrierAbsorbSound,
@@ -313,7 +313,7 @@ export class Game {
     this.P._novaDrones = [];
     this.P._splitDrones = [];
     this.P._dr = null;
-    this.P._lanceCounter = 0;
+    this.P._cryoOverloadCounter = 0;
     this.P._molotovTimer = 0;
     this.P._firePools = [];
     this.P._bottles = [];
@@ -1896,6 +1896,28 @@ export class Game {
     }
   }
 
+  _triggerCryoNova(enemy) {
+    if (!hasAscension(this.P, 'cryo', 'cryo_nova')) return;
+    const novaDef = getAscensionTierData(this.P, 'cryo')?.definition;
+
+    const novaRadius = novaDef?.novaRadius || 150;
+    const novaDamage = (enemy.maxHp || 0) * (novaDef?.novaDamageMult || 0.8);
+    addRing(enemy.x, enemy.y, 80, '#FFFFFF', 2, 0.25);
+    addRing(enemy.x, enemy.y, novaRadius, '#00CFFF', 1.5, 0.3);
+    addBurst(enemy.x, enemy.y, '#AAFFFF', 20, 140, 3.5, 0.5);
+    this._screenFlash = { col: '#00CFFF', alpha: 0.08, life: 0.15, maxLife: 0.15 };
+
+    enemies.forEach(target => {
+      if (target === enemy || target.hp <= 0) return;
+      const dx = target.x - enemy.x;
+      const dy = target.y - enemy.y;
+      if (dx * dx + dy * dy > novaRadius * novaRadius) return;
+      this.hitEnemy(target, novaDamage, '#00CFFF', true);
+      if (target.hp > 0) applyFreezeMeter(target, novaDef?.freezeSeed || 2.0);
+    });
+    playNovaDetonationSound();
+  }
+
   _maybeApplyShatter(enemy) {
     if (!hasAscension(this.P, 'cryo', 'shatter')) return false;
     if (!enemy?.frozen || enemy.isBoss) return false;
@@ -1931,65 +1953,6 @@ export class Game {
     }
   }
 
-  _triggerCryoNova(enemy) {
-    if (!hasAscension(this.P, 'cryo', 'cryo_nova')) return;
-    const novaDef = getAscensionTierData(this.P, 'cryo')?.definition;
-
-    const novaRadius = novaDef?.novaRadius || 150;
-    const novaDamage = (enemy.maxHp || 0) * (novaDef?.novaDamageMult || 0.8);
-    addRing(enemy.x, enemy.y, 80, '#FFFFFF', 2, 0.25);
-    addRing(enemy.x, enemy.y, novaRadius, '#00CFFF', 1.5, 0.3);
-    addBurst(enemy.x, enemy.y, '#AAFFFF', 20, 140, 3.5, 0.5);
-    this._screenFlash = { col: '#00CFFF', alpha: 0.08, life: 0.15, maxLife: 0.15 };
-
-    enemies.forEach(target => {
-      if (target === enemy || target.hp <= 0) return;
-      const dx = target.x - enemy.x;
-      const dy = target.y - enemy.y;
-      if (dx * dx + dy * dy > novaRadius * novaRadius) return;
-      this.hitEnemy(target, novaDamage, '#00CFFF', true);
-      if (target.hp > 0) applyFreezeMeter(target, novaDef?.freezeSeed || 2.0);
-    });
-    playNovaDetonationSound();
-  }
-
-  fireLance(P, target, spreadCount = 1, lanceDef = null) {
-    if (!target) return;
-    const a = Math.atan2(target.y - P.y, target.x - P.x);
-    const cryoLevel = getWeaponLevel(P, 'cryo');
-    const lanceDmg = P.dmg * (8 + cryoLevel * 3) * 8 * (lanceDef?.damageMult || 1);
-    const spread = spreadCount > 1 ? [-0.3, -0.15, 0, 0.15, 0.3] : [0];
-    spread.slice(0, spreadCount).forEach(offset => {
-      bullets.push({
-        x: P.x,
-        y: P.y,
-        vx: Math.cos(a + offset) * 500,
-        vy: Math.sin(a + offset) * 500,
-        r: 12,
-        dmg: lanceDmg,
-        col: '#FFFFFF',
-        life: 3.0,
-        pl: 999,
-        meta: {
-          type: 'cryo',
-          tier: cryoLevel,
-          cryoLevel,
-          isLance: true,
-          freeze: lanceDef?.freeze !== false,
-          slow: 0,
-          pierce: 999,
-          angle: a + offset,
-        },
-        trail: [],
-        hitIds: new Set(),
-      });
-    });
-
-    addRing(P.x, P.y, 40, '#FFFFFF', 3, 0.3);
-    addBurst(P.x, P.y, '#AAFFFF', 12, 100, 3, 0.4);
-    playGlacialLanceSound();
-  }
-
   _canBulletHitTarget(b, targetId, dt) {
     if (!b.meta?.multiHit) return !b.hitIds?.has(targetId);
     if (!b.meta.hitTimers) b.meta.hitTimers = new Map();
@@ -2007,11 +1970,6 @@ export class Game {
     for (let i = bullets.length - 1; i >= 0; i--) {
       const b = bullets[i];
       b.x += b.vx * dt; b.y += b.vy * dt; b.life -= dt;
-      if (b.meta?.isLance) {
-        b.trail ||= [];
-        b.trail.push({ x: b.x, y: b.y });
-        if (b.trail.length > 10) b.trail.shift();
-      }
       if (b.life < 0 || b.x < -80 || b.x > WORLD_W + 80 || b.y < -80 || b.y > WORLD_H + 80) { bullets.splice(i, 1); continue; }
 
       // enemy bullets hit player
@@ -3025,7 +2983,7 @@ export class Game {
     next.hpLag = next.maxHp;
     next._arcDiscs = [];
     next._sawBlade = null;
-    next._lanceCounter = 0;
+    next._cryoOverloadCounter = 0;
     this.P = next;
     this.cryoFields = [];
     this.barrierHealFx = [];
@@ -3837,34 +3795,6 @@ export class Game {
     });
 
     bullets.filter(b => !b.enemy).forEach(b => {
-      if (b.meta?.isLance) {
-        ctx.save();
-        (b.trail || []).forEach((pos, i) => {
-          const ratio = b.trail.length ? i / b.trail.length : 0;
-          ctx.globalAlpha = ratio * 0.5;
-          ctx.fillStyle = '#AAFFFF';
-          ctx.beginPath();
-          ctx.arc(pos.x, pos.y, b.r * ratio, 0, Math.PI * 2);
-          ctx.fill();
-        });
-        ctx.globalAlpha = 1;
-        ctx.shadowColor = '#FFFFFF';
-        ctx.shadowBlur = 20;
-        ctx.fillStyle = '#FFFFFF';
-        ctx.beginPath();
-        ctx.arc(b.x, b.y, b.r, 0, Math.PI * 2);
-        ctx.fill();
-        ctx.shadowColor = '#00CFFF';
-        ctx.shadowBlur = 30;
-        ctx.fillStyle = '#00CFFF';
-        ctx.beginPath();
-        ctx.arc(b.x, b.y, b.r * 0.6, 0, Math.PI * 2);
-        ctx.fill();
-        ctx.shadowBlur = 0;
-        ctx.restore();
-        return;
-      }
-
       if (b.meta?.isCryoShard) {
         const angle = b.meta.angle || Math.atan2(b.vy, b.vx);
         ctx.save();

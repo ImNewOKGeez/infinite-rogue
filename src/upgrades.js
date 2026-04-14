@@ -1,4 +1,4 @@
-import { addWeapon, getAscensionTier, getOwnedWeaponIds, getWeaponLevel, upgradeWeaponLevel } from './player.js';
+import { addWeapon, getAscension, getAscensionTier, getOwnedWeaponIds, getWeaponLevel, normalizeAscensionId, upgradeWeaponLevel } from './player.js';
 import { ASCENSIONS, bullets, WDEFS, getAscensionTierDefinition } from './weapons.js';
 
 export const PASSIVES = [
@@ -19,7 +19,8 @@ export function buildPool(p, options = {}) {
     const maxLvl = WDEFS[wid]?.maxLvl || 5;
     if (lvl > 0 && lvl < maxLvl) weps.push({ id: 'wu_' + wid, type: 'wep', wid, lvl: lvl + 1 });
     else if (lvl === 0 && slots < 4) weps.push({ id: 'wn_' + wid, type: 'wep', wid, lvl: 1, isNew: true });
-    if (p.ascensions?.[wid]) {
+    const ascensionId = getAscension(p, wid);
+    if (ascensionId) {
       const currentAscTier = getAscensionTier(p, wid);
       if (currentAscTier >= 1 && currentAscTier < 5) {
         const nextTier = currentAscTier + 1;
@@ -27,10 +28,10 @@ export function buildPool(p, options = {}) {
           id: 'wat_' + wid,
           type: 'asc_tier',
           wid,
-          ascensionId: p.ascensions[wid],
+          ascensionId,
           tier: nextTier,
           currentTier: currentAscTier,
-          tierDef: getAscensionTierDefinition(p.ascensions[wid], nextTier),
+          tierDef: getAscensionTierDefinition(ascensionId, nextTier),
         });
       }
     }
@@ -105,11 +106,12 @@ export function applyUpgrade(id, p) {
 export function applyAscension(p, weaponId, ascensionId, options = {}) {
   if (!p.ascensions) p.ascensions = {};
   if (!p.ascensionTiers) p.ascensionTiers = {};
-  p.ascensions[weaponId] = ascensionId;
+  p.ascensions[weaponId] = normalizeAscensionId(weaponId, ascensionId);
   p.ascensionTiers[weaponId] = 1;
 
   if (weaponId === 'cryo' && !options.preview) {
     p.ft.cryo = 0;
+    p._cryoOverloadCounter = 0;
     for (let i = bullets.length - 1; i >= 0; i--) {
       if (bullets[i].meta?.type === 'cryo') bullets.splice(i, 1);
     }

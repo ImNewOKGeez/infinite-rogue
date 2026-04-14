@@ -23,9 +23,9 @@ export const ASCENSIONS = {
       description: 'Frozen enemies that die explode for 80% max-HP damage in a 150px ice nova and seed freeze buildup on survivors.',
     },
     {
-      id: 'glacial_lance',
-      name: 'GLACIAL LANCE',
-      description: 'Every third Cryo fire is replaced by a piercing Glacial Lance. Level 5 releases a five-beam spread.',
+      id: 'overload',
+      name: 'OVERLOAD',
+      description: 'Every third Cryo volley overloads part of the 5-shot spread into double-damage piercing shots.',
     },
     {
       id: 'frost_field',
@@ -213,14 +213,14 @@ export const ASCENSION_TIER_DEFS = {
       5: { novaRadius: 230, novaDamageMult: 1.0, freezeSeed: 2.8, description: 'Nova peaks at full max-HP damage with the largest freeze spread.' },
     },
   },
-  glacial_lance: {
+  overload: {
     weaponId: 'cryo',
     tiers: {
-      1: { procEvery: 3, beamCount: 1, damageMult: 1.0, freeze: true, description: 'Every third Cryo fire becomes a piercing Glacial Lance.' },
-      2: { procEvery: 3, beamCount: 1, damageMult: 1.2, freeze: true, description: 'Glacial Lance damage increases by 20%.' },
-      3: { procEvery: 3, beamCount: 3, damageMult: 1.2, freeze: true, description: 'Glacial Lance releases a 3-beam spread.' },
-      4: { procEvery: 2, beamCount: 3, damageMult: 1.35, freeze: true, description: 'The lance now triggers every second Cryo fire.' },
-      5: { procEvery: 2, beamCount: 5, damageMult: 1.5, freeze: true, description: 'Every second Cryo fire releases the full 5-beam Glacial Lance spread.' },
+      1: { procEvery: 3, empoweredShots: 1, damageMult: 2.0, pierce: 2, description: 'Every third Cryo volley overloads 1 of 5 shots into a double-damage piercing projectile.' },
+      2: { procEvery: 3, empoweredShots: 2, damageMult: 2.0, pierce: 2, description: 'Every third Cryo volley overloads 2 of 5 shots.' },
+      3: { procEvery: 3, empoweredShots: 3, damageMult: 2.0, pierce: 3, description: 'Every third Cryo volley overloads 3 of 5 shots and increases their pierce to 3.' },
+      4: { procEvery: 3, empoweredShots: 4, damageMult: 2.0, pierce: 3, description: 'Every third Cryo volley overloads 4 of 5 shots.' },
+      5: { procEvery: 3, empoweredShots: 5, damageMult: 2.0, pierce: 4, description: 'Every third Cryo volley overloads all 5 shots and increases their pierce to 4.' },
     },
   },
   frost_field: {
@@ -396,6 +396,7 @@ export const ASCENSION_TIER_DEFS = {
 };
 
 export function getAscensionTierDefinition(ascensionId, tier = 1) {
+  if (ascensionId === 'glacial_lance') ascensionId = 'overload';
   const def = ASCENSION_TIER_DEFS[ascensionId];
   if (!def) return null;
   return def.tiers[Math.max(1, Math.min(5, tier))] || def.tiers[1];
@@ -428,8 +429,18 @@ function getCryoProjectileCount(lvl) {
   return Math.min(5, Math.max(1, lvl));
 }
 
-function getCryoSpreadStep(lvl) {
-  return lvl >= 5 ? 0.34 : lvl >= 4 ? 0.22 : lvl >= 3 ? 0.12 : lvl >= 2 ? 0.08 : 0;
+function getCryoSpreadStep(count) {
+  return count >= 5 ? 0.34 : count >= 4 ? 0.22 : count >= 3 ? 0.12 : count >= 2 ? 0.08 : 0;
+}
+
+function getCryoOverloadIndices(count, empoweredShots) {
+  const center = (count - 1) * 0.5;
+  return Array.from({ length: count }, (_, idx) => idx)
+    .sort((a, b) => {
+      const distanceDiff = Math.abs(a - center) - Math.abs(b - center);
+      return distanceDiff !== 0 ? distanceDiff : a - b;
+    })
+    .slice(0, Math.max(0, Math.min(count, empoweredShots)));
 }
 
 export const EMP_SCALING = {
@@ -594,17 +605,10 @@ export const WDEFS = {
       const ascensionTier = getAscensionTierData(p, 'cryo');
       if (ascension === 'frost_field') return;
       const dmg = getCryoDamage(lvl, p.dmg);
-      if (ascension === 'glacial_lance') {
-        p._lanceCounter = (p._lanceCounter || 0) + 1;
-        const lanceDef = ascensionTier?.definition;
-        const procEvery = lanceDef?.procEvery || 3;
-        if (p._lanceCounter >= procEvery) {
-          p._lanceCounter = 0;
-          const baseBeamCount = lvl === 5 ? 5 : 1;
-          const beamCount = Math.max(baseBeamCount, lanceDef?.beamCount || baseBeamCount);
-          this.fireLance?.(p, t, beamCount, lanceDef);
-          return { suppressDefaultSound: true };
-        }
+      let overloadDef = null;
+      if (ascension === 'overload') {
+        p._cryoOverloadCounter = (p._cryoOverloadCounter || 0) + 1;
+        overloadDef = ascensionTier?.definition;
       }
       const permafrostDef = ascension === 'permafrost' ? ascensionTier?.definition : null;
       const count = permafrostDef?.projectileCount || getCryoProjectileCount(lvl);
@@ -615,19 +619,35 @@ export const WDEFS = {
       const projectileColor = permafrostDef?.projectileColor || '#00CFFF';
       const projectileRadius = permafrostDef?.projectileRadius || 5;
       const freezeOnHit = ascension === 'permafrost';
+      const overloadProcEvery = overloadDef?.procEvery || 3;
+      const isOverloadVolley = ascension === 'overload' && (p._cryoOverloadCounter || 0) >= overloadProcEvery;
+      const overloadIndices = isOverloadVolley
+        ? new Set(getCryoOverloadIndices(count, overloadDef?.empoweredShots || 1))
+        : null;
+      if (isOverloadVolley) p._cryoOverloadCounter = 0;
 
       for (let i = 0; i < count; i++) {
         const angle = a + startOffset + i * spreadStep;
+        const isOverloadShot = !!overloadIndices?.has(i);
         mkBullet(
           p.x,
           p.y,
           Math.cos(angle) * projectileSpeed,
           Math.sin(angle) * projectileSpeed,
-          projectileRadius,
-          dmg,
-          projectileColor,
+          isOverloadShot ? projectileRadius + 1 : projectileRadius,
+          isOverloadShot ? dmg * (overloadDef?.damageMult || 2) : dmg,
+          isOverloadShot ? '#E8FCFF' : projectileColor,
           2.2,
-          { type: 'cryo', tier: lvl, cryoLevel: lvl, pierce: projectilePierce, freeze: freezeOnHit, permafrostFreeze: freezeOnHit, projectileColor }
+          {
+            type: 'cryo',
+            tier: lvl,
+            cryoLevel: lvl,
+            pierce: isOverloadShot ? (overloadDef?.pierce ?? projectilePierce) : projectilePierce,
+            freeze: freezeOnHit,
+            permafrostFreeze: freezeOnHit,
+            projectileColor: isOverloadShot ? '#E8FCFF' : projectileColor,
+            isCryoOverload: isOverloadShot,
+          }
         );
       }
     },

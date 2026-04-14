@@ -1,6 +1,6 @@
 import { BOSS_SPAWN_TIME } from './boss.js';
 import { wStats, weaponUnlockDesc } from './gameUi.js';
-import { addWeapon, mkPlayer, mkWeaponState } from './player.js';
+import { addWeapon, mkPlayer, mkWeaponState, normalizeAscensionId } from './player.js';
 import { PASSIVES, applyAscension, applyAscensionTier } from './upgrades.js';
 import { ASCENSIONS, WDEFS } from './weapons.js';
 
@@ -115,7 +115,7 @@ export function sanitizePlaytestBuild(build, char) {
 
   Object.keys(next.ascensions).forEach(wid => {
     const options = ASCENSIONS[wid] || [];
-    const chosen = next.ascensions[wid];
+    const chosen = normalizeAscensionId(wid, next.ascensions[wid]);
     if ((next.weapons[wid] || 0) < 5) {
       next.ascensions[wid] = null;
       next.ascensionTiers[wid] = 0;

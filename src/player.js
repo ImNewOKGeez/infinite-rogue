@@ -35,11 +35,16 @@ export function getWeaponLevel(p, wid) {
 }
 
 export function hasAscension(p, weaponId, ascensionId) {
-  return p.ascensions?.[weaponId] === ascensionId;
+  return getAscension(p, weaponId) === normalizeAscensionId(weaponId, ascensionId);
+}
+
+export function normalizeAscensionId(weaponId, ascensionId) {
+  if (weaponId === 'cryo' && ascensionId === 'glacial_lance') return 'overload';
+  return ascensionId || null;
 }
 
 export function getAscension(p, weaponId) {
-  return p.ascensions?.[weaponId] || null;
+  return normalizeAscensionId(weaponId, p.ascensions?.[weaponId]);
 }
 
 export function getAscensionTier(p, weaponId) {
@@ -90,7 +95,7 @@ export function mkPlayer(_W, _H, char = CHARACTERS.ghost) {
     ascensionTiers: {},
     _arcDiscs: [],
     _sawBlade: null,
-    _lanceCounter: 0,
+    _cryoOverloadCounter: 0,
     _molotovTimer: 0,
     _firePools: [],
     _bottles: [],

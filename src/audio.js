@@ -142,7 +142,7 @@ export function playCryoStormSound() {
   osc('sine', 1600, 0.03, 0.01, 0.15, 1100);
 }
 
-export function playGlacialLanceSound() {
+export function playCryoOverloadSound() {
   osc('sine', 80, 0.14, 0.01, 0.4, 60);
   osc('sawtooth', 2000, 0.075, 0.01, 0.3, 400);
 }
