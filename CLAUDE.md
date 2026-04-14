@@ -16,6 +16,23 @@ EVERY UPDATE:
 7. Play in Android Studio
 8. commit git
 
+## Git workflow for future sessions
+- Before suggesting any Git command, inspect the repo state first with `git status --short --branch` and tailor the recommendation to the actual situation.
+- Default workflow for new work: start from updated `main`, create a short-lived branch, make the change, verify the project, commit, push, then open a Pull Request into `main`.
+- Preferred command flow for a normal change:
+  - `git checkout main`
+  - `git pull origin main`
+  - `git checkout -b short-description-of-change`
+  - make changes
+  - `git add -A`
+  - `git commit -m "Short clear summary"`
+  - `git push -u origin short-description-of-change`
+- If there are modified but uncommitted files, recommend `git add -A` and `git commit -m "..."` next.
+- If the branch is ahead of origin with no uncommitted files, recommend `git push` or `git push origin <branch>` next.
+- If the branch is behind origin, recommend pulling and explain whether `git pull --rebase` or a normal `git pull` is safer for the current state.
+- If the user already committed on `main`, do not shame them; explain that it is acceptable for a personal project, then recommend the safest next step for the current state and suggest using branches for the next change.
+- When a session finishes code changes, include a short "Git next step" note telling the user the exact command they should run next, based on the live repo state.
+
 # Infinite Rogue - Project Operating Brief
 
 ## One-paragraph summary
