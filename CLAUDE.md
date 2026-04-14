@@ -39,6 +39,11 @@ EVERY UPDATE:
 - If the user already committed on `main`, do not shame them; explain that it is acceptable for a personal project, then recommend the safest next step for the current state and suggest using branches for the next change.
 - Never finish a coding session without checking the live Git state first and giving the user the next Git command to run.
 - If the repo is already clean and synced, still include `Git next step: no Git command needed right now` so the user is not left guessing.
+- Use this exact close-out shape at the end of coding sessions:
+  - `What changed:` one short beginner-friendly sentence.
+  - `Git next step:` the exact command or commands to run next.
+  - `What this does:` one short beginner-friendly explanation of the command or commands.
+  - `Repo status:` one short sentence saying whether the repo is clean, has uncommitted changes, is ahead of origin, behind origin, or fully synced.
 
 # Infinite Rogue - Project Operating Brief
 
