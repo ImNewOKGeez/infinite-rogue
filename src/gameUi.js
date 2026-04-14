@@ -209,7 +209,9 @@ const ASCENSION_TIER_FIELD_FORMATTERS = {
   novaRadius: { label: 'Nova radius', format: value => `${value}px` },
   novaDamageMult: { label: 'Nova damage', format: value => `x${Number(value).toFixed(2)}` },
   freezeSeed: { label: 'Freeze seed', format: value => `${Number(value).toFixed(1)}` },
+  procChance: { label: 'Proc chance', format: value => `${Math.round(Number(value) * 100)}%` },
   procEvery: { label: 'Proc every', format: value => `${value} shots` },
+  maxProcs: { label: 'Max chain procs', format: value => `${value}` },
   empoweredShots: { label: 'Overloaded shots', format: value => `${value} of 5` },
   beamCount: { label: 'Beam count', format: value => `${value}` },
   pierce: { label: 'Pierce', format: value => `${value} enemies` },
@@ -221,14 +223,33 @@ const ASCENSION_TIER_FIELD_FORMATTERS = {
   minChance: { label: 'Min shatter chance', format: value => `${Math.round(Number(value) * 100)}%` },
 };
 
+function humanizeAscensionTierField(key) {
+  return key
+    .replace(/([a-z])([A-Z])/g, '$1 $2')
+    .replace(/_/g, ' ')
+    .replace(/\b\w/g, chr => chr.toUpperCase());
+}
+
+function formatAscensionTierValue(value) {
+  if (typeof value === 'number') {
+    if (!Number.isFinite(value)) return `${value}`;
+    return Number.isInteger(value) ? `${value}` : `${Number(value).toFixed(2)}`;
+  }
+  if (typeof value === 'boolean') return value ? 'Yes' : 'No';
+  if (value == null) return 'None';
+  return `${value}`;
+}
+
 function formatAscensionTierChanges(currentDef, nextDef) {
   if (!nextDef) return '';
   const keys = Object.keys(nextDef).filter(key => key !== 'description');
   const changed = keys
     .filter(key => currentDef?.[key] !== nextDef[key])
     .map(key => {
-      const formatter = ASCENSION_TIER_FIELD_FORMATTERS[key];
-      if (!formatter) return '';
+      const formatter = ASCENSION_TIER_FIELD_FORMATTERS[key] || {
+        label: humanizeAscensionTierField(key),
+        format: formatAscensionTierValue,
+      };
       const before = formatter.format(currentDef?.[key]);
       const after = formatter.format(nextDef[key]);
       return renderStatChange(`${formatter.label}: ${before}`, `${formatter.label}: ${after}`);

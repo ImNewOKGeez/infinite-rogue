@@ -30,14 +30,14 @@ export const ASCENSIONS = {
     {
       id: 'shatter',
       name: 'SHATTER',
-      description: 'Frozen enemies have a chance to instantly die on any hit. Chance scales with freeze time remaining - max 25% at moment of freeze, drops to zero as timer expires.',
+      description: 'Frozen enemies become brittle and can instantly die on any hit. Chance scales with freeze time remaining, starting at 15% to 35% by tier and dropping to zero as the freeze expires.',
     },
   ],
   pulse: [
     {
       id: 'chain_reaction',
       name: 'CHAIN REACTION',
-      description: 'Cluster bomb explosions have a 35% chance to trigger a full new Pulse shell impact at that location, complete with its own cluster generation.',
+      description: 'Pulse fires a split volley with a hotter orange-red shell profile, while cluster bomb explosions still have a chance to trigger a full new Pulse impact.',
     },
     {
       id: 'collapsed_round',
@@ -221,21 +221,21 @@ export const ASCENSION_TIER_DEFS = {
   shatter: {
     weaponId: 'cryo',
     tiers: {
-      1: { maxChance: 0.25, minChance: 0.0, description: 'Frozen enemies can instantly shatter on hit.' },
-      2: { maxChance: 0.3, minChance: 0.0, description: 'Raises the maximum shatter chance to 30%.' },
-      3: { maxChance: 0.35, minChance: 0.05, description: 'Raises the maximum shatter chance and leaves a small late-window chance.' },
-      4: { maxChance: 0.4, minChance: 0.1, description: 'Shatter remains dangerous for longer into the freeze.' },
-      5: { maxChance: 0.45, minChance: 0.15, description: 'Shatter peaks at 45% and never fully decays while the target stays frozen.' },
+      1: { maxChance: 0.15, projectilePierce: 2, description: 'Frozen enemies become brittle and can instantly shatter on hit, starting at 15% chance and fading to 0% before thaw. Cryo pierce increases to 2.' },
+      2: { maxChance: 0.20, projectilePierce: 3, description: 'Raises the opening shatter chance to 20%, still fading to 0% before thaw. Cryo pierce increases to 3.' },
+      3: { maxChance: 0.25, projectilePierce: 4, description: 'Raises the opening shatter chance to 25%, still fading to 0% before thaw. Cryo pierce increases to 4.' },
+      4: { maxChance: 0.30, projectilePierce: 5, description: 'Raises the opening shatter chance to 30%, still fading to 0% before thaw. Cryo pierce increases to 5.' },
+      5: { maxChance: 0.35, projectilePierce: 6, description: 'Raises the opening shatter chance to 35%, still fading to 0% before thaw. Cryo pierce increases to 6.' },
     },
   },
   chain_reaction: {
     weaponId: 'pulse',
     tiers: {
-      1: { procChance: 0.35, maxProcs: 3, chainClusterBonus: 0, description: 'Cluster explosions have a 35% chance to retrigger a full Pulse impact.' },
-      2: { procChance: 0.45, maxProcs: 3, chainClusterBonus: 0, description: 'Chain Reaction proc chance rises to 45%.' },
-      3: { procChance: 0.55, maxProcs: 4, chainClusterBonus: 0, description: 'Chain Reaction can proc one extra time per chain.' },
-      4: { procChance: 0.65, maxProcs: 4, chainClusterBonus: 1, description: 'Retriggered impacts generate one extra cluster layer.' },
-      5: { procChance: 0.75, maxProcs: 5, chainClusterBonus: 1, description: 'Chain Reaction becomes highly reliable and can sustain longer chains.' },
+      1: { procChance: 0.35, maxProcs: 3, projectileCount: 2, description: 'Pulse fires a second Chain Reaction shell in the opposite direction, and cluster explosions have a 35% chance to retrigger a full Pulse impact.' },
+      2: { procChance: 0.40, maxProcs: 3, projectileCount: 2, description: 'Chain Reaction keeps the opposite-direction volley and raises cluster explosion retrigger chance to 40%.' },
+      3: { procChance: 0.40, maxProcs: 3, projectileCount: 3, description: 'Chain Reaction fires 3 evenly split shells with one aimed at the closest enemy.' },
+      4: { procChance: 0.45, maxProcs: 3, projectileCount: 3, description: 'Chain Reaction keeps the 3-shell split and raises cluster explosion retrigger chance to 45%.' },
+      5: { procChance: 0.45, maxProcs: 3, projectileCount: 4, description: 'Chain Reaction fires 4 evenly split shells with one aimed at the closest enemy.' },
     },
   },
   collapsed_round: {
@@ -534,6 +534,29 @@ function getPulseBaseDamage(p, lvl) {
   return p.dmg * (28 + lvl * 10);
 }
 
+function getClosestEnemyToPoint(x, y) {
+  let best = null;
+  let bestD2 = Infinity;
+  enemies.forEach(enemy => {
+    if (!enemy || enemy.hp <= 0) return;
+    const dx = enemy.x - x;
+    const dy = enemy.y - y;
+    const d2 = dx * dx + dy * dy;
+    if (d2 < bestD2) {
+      bestD2 = d2;
+      best = enemy;
+    }
+  });
+  const boss = getExtraTarget();
+  if (boss?.alive) {
+    const dx = boss.x - x;
+    const dy = boss.y - y;
+    const d2 = dx * dx + dy * dy;
+    if (d2 < bestD2) best = boss;
+  }
+  return best;
+}
+
 function getEmpBaseDamage(p) {
   return p.dmg * 4.6;
 }
@@ -566,6 +589,22 @@ function firePulseShell(p, angle, dmg, lvl, overrides = {}) {
   );
 }
 
+function fireChainReactionVolley(p, angle, dmg, lvl, chainDef) {
+  const projectileCount = Math.max(2, chainDef?.projectileCount || 2);
+  const chainState = { procs: 0 };
+  for (let i = 0; i < projectileCount; i++) {
+    const shotAngle = angle + (Math.PI * 2 * i) / projectileCount;
+    firePulseShell(p, shotAngle, dmg, lvl, {
+      col: '#FF6A2A',
+      meta: {
+        chainReaction: true,
+        glowCol: '#FFE3A0',
+        chainState,
+      },
+    });
+  }
+}
+
 export const WDEFS = {
   cryo: {
     id: 'cryo', name: 'CRYO', icon: '❄', col: '#00CFFF',
@@ -596,11 +635,12 @@ export const WDEFS = {
         overloadDef = ascensionTier?.definition;
       }
       const permafrostDef = ascension === 'permafrost' ? ascensionTier?.definition : null;
+      const shatterDef = ascension === 'shatter' ? ascensionTier?.definition : null;
       const count = permafrostDef?.projectileCount || getCryoProjectileCount(lvl);
       const spreadStep = getCryoSpreadStep(count) * (permafrostDef?.spreadStepMult || 1);
       const startOffset = -spreadStep * (count - 1) * 0.5;
       const projectileSpeed = permafrostDef?.projectileSpeed || 430;
-      const projectilePierce = permafrostDef?.projectilePierce ?? 1;
+      const projectilePierce = permafrostDef?.projectilePierce ?? shatterDef?.projectilePierce ?? 1;
       const projectileColor = permafrostDef?.projectileColor || '#00CFFF';
       const projectileRadius = permafrostDef?.projectileRadius || 5;
       const freezeOnHit = ascension === 'permafrost';
@@ -722,8 +762,16 @@ export const WDEFS = {
         }
       }
 
+      if (ascension === 'chain_reaction') {
+        const chainDef = ascensionTier?.definition;
+        const primaryTarget = getClosestEnemyToPoint(p.x, p.y) || t;
+        const chainAngle = Math.atan2(primaryTarget.y - p.y, primaryTarget.x - p.x);
+        fireChainReactionVolley(p, chainAngle, dmg, lvl, chainDef);
+        return;
+      }
+
       firePulseShell(p, a, dmg, lvl, {
-        meta: ascension === 'chain_reaction' ? { chainState: { procs: 0 } } : undefined,
+        meta: ascension === 'chain_reaction' ? { chainReaction: true, glowCol: '#FFE3A0', chainState: { procs: 0 } } : undefined,
       });
     }
   },
@@ -1105,6 +1153,9 @@ export function triggerPulseShockwave(e, dmg, onHitEnemy) {
 }
 
 export function triggerPulseExplosion(game, bullet, x, y, onHitEnemy, onHitBoss) {
+  const isChainReaction = !!(bullet.meta?.chainReaction || bullet.meta?.chainProc);
+  const effectColor = isChainReaction ? '#FF6A2A' : '#FFB627';
+  const burstColor = isChainReaction ? '#FFE3A0' : '#FFB627';
   const radius = bullet.meta?.isOverload
     ? 78 * (bullet.meta?.overloadRadiusScale || 2)
     : bullet.meta?.chainProc
@@ -1114,8 +1165,8 @@ export function triggerPulseExplosion(game, bullet, x, y, onHitEnemy, onHitBoss)
         : 78;
   const splash = bullet.dmg * 0.65;
   const ringMr = bullet.meta?.isOverload ? radius * 2.5 : bullet.meta?.chainProc ? radius * 1.5 : radius;
-  addRing(x, y, ringMr, '#FFB627', 2.8, 0.5);
-  addBurst(x, y, '#FFB627', 10, 95, 4, 0.45);
+  addRing(x, y, ringMr, effectColor, 2.8, 0.5);
+  addBurst(x, y, burstColor, 10, 95, 4, 0.45);
   if (bullet.meta?.isOverload && game) game.overloadFlash = Math.max(game.overloadFlash || 0, 0.15);
   if (bullet.meta?.chainProc && game) game.chainFlash = Math.max(game.chainFlash || 0, 0.1);
   applyPulseExplosionDamage(x, y, radius, splash, onHitEnemy, onHitBoss);
@@ -1123,6 +1174,7 @@ export function triggerPulseExplosion(game, bullet, x, y, onHitEnemy, onHitBoss)
   if (clusterGen > 0) {
     spawnPulseClusterBombs(x, y, bullet.dmg * 0.45, 1, clusterGen, {
       chainState: bullet.meta?.chainState || null,
+      chainReaction: !!bullet.meta?.chainReaction,
       isChainProc: !!bullet.meta?.isChainProc,
     });
   }
@@ -1147,6 +1199,7 @@ function spawnPulseClusterBombs(x, y, dmg, generation, maxGeneration, options = 
       maxGeneration,
       canRecluster: generation < maxGeneration,
       chainState: options.chainState || null,
+      chainReaction: !!options.chainReaction,
       isChainProc: !!options.isChainProc,
     });
   }
@@ -1167,7 +1220,9 @@ function updatePulseClusters(game, dt) {
     addDot(
       cluster.x,
       cluster.y,
-      cluster.generation === 1 ? '#FFB627' : '#FFE4A3',
+      cluster.chainReaction
+        ? (cluster.generation === 1 ? '#FF6A2A' : '#FFE3A0')
+        : (cluster.generation === 1 ? '#FFB627' : '#FFE4A3'),
       cluster.generation === 1 ? 4 : 3,
       0.12
     );
@@ -1178,14 +1233,13 @@ function updatePulseClusters(game, dt) {
 }
 
 function detonatePulseCluster(cluster, game) {
-  const chainReactionActive = game && getAscension(game.P, 'pulse') === 'chain_reaction';
   const radiusBase = cluster.generation === 1 ? 56 : 42;
-  const radius = chainReactionActive ? radiusBase * 1.3 : radiusBase;
-  const color = cluster.generation === 1 ? '#FFB627' : '#FFE4A3';
+  const radius = radiusBase;
+  const color = cluster.chainReaction
+    ? (cluster.generation === 1 ? '#FF6A2A' : '#FFE3A0')
+    : (cluster.generation === 1 ? '#FFB627' : '#FFE4A3');
   addRing(cluster.x, cluster.y, radius, color, 1.8, 0.35);
-  const burstCount = (cluster.generation === 1 ? 6 : 4) + (chainReactionActive ? 4 : 0);
-  const burstSpeed = (chainReactionActive ? 1.3 : 1) * 70;
-  addBurst(cluster.x, cluster.y, color, burstCount, burstSpeed, 2.8, 0.35);
+  addBurst(cluster.x, cluster.y, color, cluster.generation === 1 ? 6 : 4, 70, 2.8, 0.35);
   applyPulseExplosionDamage(
     cluster.x,
     cluster.y,
@@ -1203,6 +1257,7 @@ function detonatePulseCluster(cluster, game) {
       cluster.maxGeneration,
       {
         chainState: cluster.chainState,
+        chainReaction: cluster.chainReaction,
         isChainProc: cluster.isChainProc,
       }
     );

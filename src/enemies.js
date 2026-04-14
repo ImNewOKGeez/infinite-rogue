@@ -70,6 +70,7 @@ function mkStatusState() {
     freezeThreshold: 1,
     freezeCooldown: 0,
     frozenTimer: 0,
+    frozenDuration: 0,
     frostLevel: 0,
     cryoPulseCd: 0,
     overloadMarkT: 0,
@@ -249,6 +250,7 @@ export function ensureFreezeState(target) {
   if (target.freezeThreshold == null) target.freezeThreshold = Math.max(1, Math.ceil((target.maxHp || 40) / 40));
   if (target.freezeCooldown == null) target.freezeCooldown = 0;
   if (target.frozenTimer == null) target.frozenTimer = 0;
+  if (target.frozenDuration == null) target.frozenDuration = 0;
   if (target.frozen == null) target.frozen = false;
   if (target.frostLevel == null) target.frostLevel = 0;
   if (target.isBoss && target.bossFreezeCooldown == null) target.bossFreezeCooldown = 0;
@@ -323,6 +325,7 @@ export function updateEnemyFreezeState(e, dt, P = null) {
     if (e.frozenTimer <= 0) {
       e.frozen = false;
       e.frozenTimer = 0;
+      e.frozenDuration = 0;
       e.permafrost = false;
       e._permafrostSpreadT = 0;
       e.freezeMeter = 0;
@@ -338,7 +341,8 @@ export function updateEnemyFreezeState(e, dt, P = null) {
   if (e.freezeMeter >= effectiveThreshold && e.freezeCooldown <= 0) {
     e.frozen = true;
     e.permafrost = hasAscension(P, 'cryo', 'permafrost');
-    e.frozenTimer = e.permafrost ? 99999 : 1.5;
+    e.frozenDuration = e.permafrost ? 99999 : 1.5;
+    e.frozenTimer = e.frozenDuration;
     e._permafrostSpreadT = 0;
     e.freezeMeter = 0;
     e.slowT = 0;

@@ -1472,23 +1472,26 @@ export class Game {
     if (!chainState || chainState.procs >= (chainDef?.maxProcs || 3)) return;
     if (Math.random() >= (chainDef?.procChance || 0.35)) return;
     chainState.procs += 1;
-    addRing(cluster.x, cluster.y, 80, '#FFB627', 2.8, 0.3);
-    addBurst(cluster.x, cluster.y, '#FFD56A', 10, 200, 2.8, 0.22);
+    addRing(cluster.x, cluster.y, 80, '#FF6A2A', 2.8, 0.3);
+    addBurst(cluster.x, cluster.y, '#FFE3A0', 10, 200, 2.8, 0.22);
     this.chainFlash = Math.max(this.chainFlash, 0.1);
     const lvl = getWeaponLevel(this.P, 'pulse');
     const procBullet = {
       x: cluster.x,
       y: cluster.y,
       dmg: this.P.dmg * (28 + lvl * 10),
-      col: '#FFB627',
+      col: '#FF6A2A',
       meta: {
         type: 'pulse',
         tier: lvl,
         pulseLvl: lvl,
         explosive: true,
-        clusterGen: Math.max(0, lvl - 1) + (chainDef?.chainClusterBonus || 0),
+        clusterGen: Math.max(0, lvl - 1),
+        chainReaction: true,
+        glowCol: '#FFE3A0',
         chainProc: true,
         isChainProc: true,
+        chainState,
       },
     };
     this.handlePulseImpact(procBullet, cluster.x, cluster.y);
@@ -1900,10 +1903,10 @@ export class Game {
     if (!hasAscension(this.P, 'cryo', 'shatter')) return false;
     if (!enemy?.frozen || enemy.isBoss) return false;
     const shatterDef = getAscensionTierData(this.P, 'cryo')?.definition;
-    const freezeRatio = Math.max(0, Math.min(1, (enemy.frozenTimer || 0) / 1.5));
-    const minChance = shatterDef?.minChance || 0;
+    const frozenDuration = Math.max(enemy.frozenDuration || 1.5, 0.001);
+    const freezeRatio = Math.max(0, Math.min(1, (enemy.frozenTimer || 0) / frozenDuration));
     const maxChance = shatterDef?.maxChance || 0.25;
-    const chance = minChance + (maxChance - minChance) * freezeRatio;
+    const chance = maxChance * freezeRatio;
     if (Math.random() >= chance) return false;
 
     enemy.hp = 0;
@@ -3584,6 +3587,39 @@ export class Game {
           ctx.stroke();
           ctx.restore();
         }
+
+        if (hasAscension(this.P, 'cryo', 'shatter') && !e.permafrost) {
+          const shatterDef = getAscensionTierData(this.P, 'cryo')?.definition;
+          const frozenDuration = Math.max(e.frozenDuration || 1.5, 0.001);
+          const freezeRatio = Math.max(0, Math.min(1, (e.frozenTimer || 0) / frozenDuration));
+          const crackAlpha = (0.2 + freezeRatio * 0.55) * ((shatterDef?.maxChance || 0.15) / 0.35);
+          const spokeCount = 6;
+
+          ctx.save();
+          ctx.globalAlpha = crackAlpha;
+          ctx.strokeStyle = '#FFFFFF';
+          ctx.lineWidth = 1.25;
+          ctx.shadowColor = '#DFF9FF';
+          ctx.shadowBlur = 10;
+          for (let i = 0; i < spokeCount; i++) {
+            const a = this.gt * 2.4 + e.id * 0.31 + (i / spokeCount) * Math.PI * 2;
+            const innerR = e.r * (0.22 + (i % 2) * 0.08);
+            const midR = e.r * (0.62 + ((i + 1) % 2) * 0.08);
+            const outerR = e.r + 8 + freezeRatio * 5;
+            ctx.beginPath();
+            ctx.moveTo(e.x + Math.cos(a) * innerR, e.y + Math.sin(a) * innerR);
+            ctx.lineTo(e.x + Math.cos(a) * midR, e.y + Math.sin(a) * midR);
+            ctx.lineTo(e.x + Math.cos(a) * outerR, e.y + Math.sin(a) * outerR);
+            ctx.stroke();
+          }
+          ctx.setLineDash([2, 5]);
+          ctx.lineWidth = 1.6;
+          ctx.strokeStyle = 'rgba(223, 249, 255, 0.9)';
+          ctx.beginPath();
+          ctx.arc(e.x, e.y, e.r + 10 + Math.sin(this.gt * 6 + e.id) * 1.5, 0, Math.PI * 2);
+          ctx.stroke();
+          ctx.restore();
+        }
       }
 
       if (!perfMode && e.stunned) {
@@ -3901,6 +3937,41 @@ export class Game {
         return;
       }
 
+      if (b.meta?.type === 'pulse' && b.meta?.chainReaction && !b.meta?.isOverload) {
+        const angle = Math.atan2(b.vy, b.vx);
+        ctx.save();
+        ctx.translate(b.x, b.y);
+        ctx.rotate(angle);
+        ctx.shadowColor = '#FFE3A0';
+        ctx.shadowBlur = ultraMode ? 0 : 20;
+        ctx.fillStyle = '#FF6A2A';
+        ctx.beginPath();
+        ctx.moveTo(10, 0);
+        ctx.lineTo(1, 6.5);
+        ctx.lineTo(-8, 0);
+        ctx.lineTo(1, -6.5);
+        ctx.closePath();
+        ctx.fill();
+        ctx.fillStyle = '#FFF3C1';
+        ctx.beginPath();
+        ctx.moveTo(4.5, 0);
+        ctx.lineTo(0, 2.8);
+        ctx.lineTo(-3.6, 0);
+        ctx.lineTo(0, -2.8);
+        ctx.closePath();
+        ctx.fill();
+        if (!ultraMode) {
+          ctx.strokeStyle = 'rgba(255,227,160,0.9)';
+          ctx.lineWidth = 1.4;
+          ctx.beginPath();
+          ctx.moveTo(-10, 0);
+          ctx.lineTo(-2, 0);
+          ctx.stroke();
+        }
+        ctx.restore();
+        return;
+      }
+
       const tier = b.meta?.tier || 1;
       const glow = b.meta?.glowCol || (b.meta?.type === 'cryo' ? '#9af3ff' : b.meta?.type === 'pulse' ? '#ffd16f' : b.col);
       const drawR = b.meta?.isOverload ? 20 : b.meta?.type === 'cryo' ? b.r : b.r + (tier >= 2 ? 1 : 0) + (b.meta?.type === 'pulse' && tier >= 2 ? 1 : 0);
@@ -4193,7 +4264,7 @@ export class Game {
     }
 
     if (this.chainFlash > 0) {
-      ctx.fillStyle = `rgba(255,182,39,${0.1 * Math.min(1, this.chainFlash / 0.1)})`;
+      ctx.fillStyle = `rgba(255,106,42,${0.1 * Math.min(1, this.chainFlash / 0.1)})`;
       ctx.fillRect(0, 0, W, H);
     }
 
