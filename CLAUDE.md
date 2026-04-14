@@ -282,10 +282,11 @@ The live weapon system is simple and numeric right now:
 - Level 4: cluster chain extends another generation.
 - Level 5: cluster chain extends to four total generations.
 - Frozen-target bonus damage logic is wired, but depends on freeze being active.
-- All live Pulse Ascensions now continue from `T1` to `T5`, scaling their existing behavior through stronger retrigger odds, wider pull plus extra shells, overload pierce plus larger detonations, mine stockpile/blast size, or fragment count/blast size.
+- All live Pulse Ascensions now continue from `T1` to `T5`, scaling their existing behavior through stronger retrigger odds, wider pull plus extra shells, overload pierce plus larger detonations, proximity-mine scatter follow-ups plus blast-radius spikes, or fragment count/blast size.
 - `chain_reaction`: uses a hotter orange-red projectile/explosion treatment than base Pulse, fires 2 shells at `T1-T2` with the second shot opposite the main target line, upgrades to `3` evenly split shells at `T3-T4`, and `4` evenly split shells at `T5`, always keeping one shell aimed at the closest enemy while cluster-bomb retrigger chance steps from `35%` at `T1`, to `40%` at `T2-T3`, and `45%` at `T4-T5`.
 - `collapsed_round`: now uses a brighter gravity-shell treatment than base Pulse so the Ascension reads clearly in combat, fires `1/1/2/2/3` shells from `T1-T5`, keeps one shell aimed at the closest enemy, adds the opposite-direction shell at `T3-T4`, and reaches a three-way evenly split volley at `T5`; pull radius increases only at `T2` and `T4`, while each shell still pulls enemies inward before the normal cluster chain detonates.
 - `overload_round`: every third Pulse shot becomes a much brighter white-hot overload shell; `T1` starts at `5x` damage with `2` pierce, a massive explosion on every hit, and a final cluster detonation wherever the shell's journey ends, `T2` and `T4` add `+1` pierce each (`2/3/3/4/4`), and `T3` plus `T5` increase both the hit-explosion size and the final cluster-bomb size.
+- `proximity_mine`: keeps the base proximity-mine trigger at `T1`, adds `6` smaller outward-flying follow-up mines at `T2`, increases only the main mine blast radius at `T3`, increases the scattered child-mine count to `10` at `T4`, and increases the main mine blast radius again at `T5`.
 
 #### EMP
 - EMP is now a clean scaling weapon with no baked-in per-level special rules.
@@ -595,6 +596,7 @@ scripts/
 5. Keep moving gameplay systems toward easier future content addition.
 
 ## Changelog
+- 2026-04-14: Retuned Pulse Proximity Mine to the intended Ascension tier curve so it now stays on the normal mine behavior at `T1`, launches `6` smaller outward-flying mines on each parent-mine explosion starting at `T2`, increases only the parent mine blast radius at `T3` and `T5`, raises the scattered child-mine count to `10` at `T4`, and keeps the follow-up mines as smaller non-recursive blasts for readability.
 - 2026-04-14: Retuned Pulse Collapsed Round to the intended Ascension tier curve so it now uses a distinct brighter gravity-shell visual, fires `1/1/2/2/3` shells from `T1-T5` with one shell always aimed at the closest enemy, adds the opposite-direction shell at `T3-T4`, and raises pull radius only at `T2` and `T4` while preserving the delayed pull-then-cluster payoff.
 - 2026-04-14: Retuned Pulse Chain Reaction to the intended Ascension tier curve so it now uses a distinct hotter orange-red projectile/explosion visual, fires `2/2/3/3/4` evenly split shells from `T1-T5` with one shell always aimed at the closest enemy, and raises cluster-bomb retrigger chance only at `T2` and `T4` (`35/40/40/45/45%`).
 - 2026-04-14: Retuned Pulse Overload Round to the intended Ascension tier curve so it now stays on an every-third-shot cadence at all tiers, starts at `5x` damage with `2` pierce, fires with a much more striking white-hot shell visual than base Pulse, explodes heavily on every hit, only releases its cluster chain when the shell's journey actually ends, adds pierce at `T2` and `T4`, and increases both hit-explosion and cluster-bomb size at `T3` and `T5`.

@@ -1503,6 +1503,15 @@ export class Game {
     if (!this.P?._pulseMines) return;
     this.P._pulseMines = this.P._pulseMines.filter(mine => {
       mine.life -= dt;
+      if (mine.travelTimer > 0) {
+        mine.x += (mine.vx || 0) * dt;
+        mine.y += (mine.vy || 0) * dt;
+        mine.travelTimer -= dt;
+        if (mine.travelTimer <= 0) {
+          mine.vx = 0;
+          mine.vy = 0;
+        }
+      }
       if (mine.armTimer > 0) {
         mine.armTimer -= dt;
         return mine.life > 0;
@@ -1518,6 +1527,37 @@ export class Game {
       }
       return true;
     });
+  }
+
+  _spawnScatterMines(mine) {
+    if (!this.P?._pulseMines) return;
+    const count = Math.max(0, Math.round(mine.scatterMineCount || 0));
+    if (count <= 0 || mine.isScatterMine) return;
+    const angleOffset = Math.random() * Math.PI * 2;
+    for (let i = 0; i < count; i++) {
+      const angle = angleOffset + (i / count) * Math.PI * 2;
+      const speed = mine.scatterMineSpeed || 260;
+      const travelTime = mine.scatterMineTravelTime || 0.28;
+      this.P._pulseMines.push({
+        x: mine.x,
+        y: mine.y,
+        r: mine.scatterMineTriggerRadius || 12,
+        armed: false,
+        armTimer: (mine.scatterMineArmTimer || 0.18) + travelTime,
+        travelTimer: travelTime,
+        vx: Math.cos(angle) * speed,
+        vy: Math.sin(angle) * speed,
+        triggered: false,
+        dmg: mine.dmg * (mine.scatterMineDamageMult || 0.45),
+        col: '#FFD16A',
+        life: 12,
+        blastRadius: mine.scatterMineBlastRadius || 72,
+        scatterMineCount: 0,
+        isScatterMine: true,
+        spawnClusters: false,
+        spawnSlowField: false,
+      });
+    }
   }
 
   updateSlowFields(dt) {
@@ -1536,18 +1576,21 @@ export class Game {
     });
     pruneEnemies();
     const clusterGen = Math.max(0, getWeaponLevel(this.P, 'pulse') - 1);
-    if (clusterGen > 0) {
+    if (mine.spawnClusters !== false && clusterGen > 0) {
       spawnPulseClusters(mine.x, mine.y, mine.dmg * 0.5, clusterGen, {
         chainState: getAscension(this.P, 'pulse') === 'chain_reaction' ? { procs: 0 } : null,
       });
     }
-    this.slowFields.push({
-      x: mine.x,
-      y: mine.y,
-      r: 100,
-      life: 2.0,
-      maxLife: 2.0,
-    });
+    if (mine.spawnSlowField !== false) {
+      this.slowFields.push({
+        x: mine.x,
+        y: mine.y,
+        r: 100,
+        life: 2.0,
+        maxLife: 2.0,
+      });
+    }
+    this._spawnScatterMines(mine);
     addRing(mine.x, mine.y, blastR, mine.col, 2.5, 0.4);
     addBurst(mine.x, mine.y, mine.col, 16, 150, 3, 0.5);
   }

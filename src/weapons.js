@@ -52,7 +52,7 @@ export const ASCENSIONS = {
     {
       id: 'proximity_mine',
       name: 'PROXIMITY MINE',
-      description: 'Pulse shells drop at the player\'s feet as proximity mines. Enemies walking over a mine trigger it. Up to 6 mines active at once.',
+      description: 'Pulse shells drop at the player\'s feet as proximity mines. Higher tiers add scattered mini-mines and larger blast radius spikes.',
     },
     {
       id: 'fragmentation',
@@ -261,11 +261,11 @@ export const ASCENSION_TIER_DEFS = {
   proximity_mine: {
     weaponId: 'pulse',
     tiers: {
-      1: { maxMines: 6, triggerRadius: 18, blastRadius: 120, damageMult: 3.0, description: 'Pulse shells become proximity mines with up to 6 active.' },
-      2: { maxMines: 8, triggerRadius: 20, blastRadius: 135, damageMult: 3.2, description: 'More mines can stay active and their blast grows.' },
-      3: { maxMines: 10, triggerRadius: 22, blastRadius: 150, damageMult: 3.4, description: 'Proximity Mine stores more charges and hits harder.' },
-      4: { maxMines: 12, triggerRadius: 26, blastRadius: 165, damageMult: 3.7, description: 'Mine trigger range and blast radius both increase.' },
-      5: { maxMines: 14, triggerRadius: 30, blastRadius: 180, damageMult: 4.0, description: 'Proximity Mine reaches maximum stockpile and explosion size.' },
+      1: { maxMines: 6, triggerRadius: 18, blastRadius: 120, damageMult: 3.0, scatterMineCount: 0, description: 'Pulse shells become proximity mines with their normal trigger and blast behavior.' },
+      2: { maxMines: 6, triggerRadius: 18, blastRadius: 120, damageMult: 3.0, scatterMineCount: 6, scatterMineTriggerRadius: 12, scatterMineBlastRadius: 72, scatterMineDamageMult: 0.45, scatterMineTravelTime: 0.28, scatterMineArmTimer: 0.18, scatterMineSpeed: 260, description: 'When a mine explodes, it launches 6 smaller mines in all directions.' },
+      3: { maxMines: 6, triggerRadius: 18, blastRadius: 145, damageMult: 3.0, scatterMineCount: 6, scatterMineTriggerRadius: 12, scatterMineBlastRadius: 72, scatterMineDamageMult: 0.45, scatterMineTravelTime: 0.28, scatterMineArmTimer: 0.18, scatterMineSpeed: 260, description: 'The main proximity mine blast radius increases.' },
+      4: { maxMines: 6, triggerRadius: 18, blastRadius: 145, damageMult: 3.0, scatterMineCount: 10, scatterMineTriggerRadius: 12, scatterMineBlastRadius: 72, scatterMineDamageMult: 0.45, scatterMineTravelTime: 0.28, scatterMineArmTimer: 0.18, scatterMineSpeed: 260, description: 'More smaller mines fly out from each triggered mine.' },
+      5: { maxMines: 6, triggerRadius: 18, blastRadius: 170, damageMult: 3.0, scatterMineCount: 10, scatterMineTriggerRadius: 12, scatterMineBlastRadius: 72, scatterMineDamageMult: 0.45, scatterMineTravelTime: 0.28, scatterMineArmTimer: 0.18, scatterMineSpeed: 260, description: 'The main proximity mine blast radius increases again.' },
     },
   },
   fragmentation: {
@@ -728,11 +728,24 @@ export const WDEFS = {
           r: mineDef?.triggerRadius || 18,
           armed: false,
           armTimer: 0.5,
+          travelTimer: 0,
+          vx: 0,
+          vy: 0,
           triggered: false,
           dmg: dmg * (mineDef?.damageMult || 3),
           col: '#FFB627',
           life: 30,
           blastRadius: mineDef?.blastRadius || 120,
+          scatterMineCount: mineDef?.scatterMineCount || 0,
+          scatterMineTriggerRadius: mineDef?.scatterMineTriggerRadius || 12,
+          scatterMineBlastRadius: mineDef?.scatterMineBlastRadius || 72,
+          scatterMineDamageMult: mineDef?.scatterMineDamageMult || 0.45,
+          scatterMineTravelTime: mineDef?.scatterMineTravelTime || 0.28,
+          scatterMineArmTimer: mineDef?.scatterMineArmTimer || 0.18,
+          scatterMineSpeed: mineDef?.scatterMineSpeed || 260,
+          isScatterMine: false,
+          spawnClusters: true,
+          spawnSlowField: true,
         });
         return;
       }
