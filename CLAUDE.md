@@ -596,6 +596,7 @@ scripts/
 5. Keep moving gameplay systems toward easier future content addition.
 
 ## Changelog
+- 2026-04-14: Fixed Pulse Proximity Mine scatter follow-ups so `T2` and `T4` now reliably keep their spawned mini-mines after a parent mine detonates, and gave proximity-mine placement its own bomb-arming audio cue instead of reusing the base Pulse shot sound.
 - 2026-04-14: Retuned Pulse Proximity Mine to the intended Ascension tier curve so it now stays on the normal mine behavior at `T1`, launches `6` smaller outward-flying mines on each parent-mine explosion starting at `T2`, increases only the parent mine blast radius at `T3` and `T5`, raises the scattered child-mine count to `10` at `T4`, and keeps the follow-up mines as smaller non-recursive blasts for readability.
 - 2026-04-14: Retuned Pulse Collapsed Round to the intended Ascension tier curve so it now uses a distinct brighter gravity-shell visual, fires `1/1/2/2/3` shells from `T1-T5` with one shell always aimed at the closest enemy, adds the opposite-direction shell at `T3-T4`, and raises pull radius only at `T2` and `T4` while preserving the delayed pull-then-cluster payoff.
 - 2026-04-14: Retuned Pulse Chain Reaction to the intended Ascension tier curve so it now uses a distinct hotter orange-red projectile/explosion visual, fires `2/2/3/3/4` evenly split shells from `T1-T5` with one shell always aimed at the closest enemy, and raises cluster-bomb retrigger chance only at `T2` and `T4` (`35/40/40/45/45%`).

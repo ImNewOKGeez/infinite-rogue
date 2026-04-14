@@ -28,7 +28,7 @@ import { hexToRgba, brightenHexColor, traceEnemyShape } from './renderUtils.js';
 import {
   initAudio, resumeAudio,
   playEMPSound,
-  playCryoFire, playPermafrostFire, playCryoStormSound, playPulseFire, playCascadeSound, playTriplePulseSound, playArcSound,
+  playCryoFire, playPermafrostFire, playCryoStormSound, playPulseFire, playPulseMineArmSound, playCascadeSound, playTriplePulseSound, playArcSound,
   playArcBladeSound,
   playMolotovThrowSound, playMolotovLandSound,
   playBarrierAbsorbSound,
@@ -1501,6 +1501,7 @@ export class Game {
 
   updateMines(dt) {
     if (!this.P?._pulseMines) return;
+    const spawnedMines = [];
     this.P._pulseMines = this.P._pulseMines.filter(mine => {
       mine.life -= dt;
       if (mine.travelTimer > 0) {
@@ -1521,24 +1522,26 @@ export class Game {
       for (const e of enemies) {
         if (Math.hypot(e.x - mine.x, e.y - mine.y) < mine.r + e.r) {
           mine.triggered = true;
-          this.triggerMineExplosion(mine);
+          this.triggerMineExplosion(mine, spawnedMines);
           return false;
         }
       }
       return true;
     });
+    if (spawnedMines.length) this.P._pulseMines.push(...spawnedMines);
   }
 
-  _spawnScatterMines(mine) {
-    if (!this.P?._pulseMines) return;
+  _spawnScatterMines(mine, out = null) {
     const count = Math.max(0, Math.round(mine.scatterMineCount || 0));
     if (count <= 0 || mine.isScatterMine) return;
+    const target = out || this.P?._pulseMines;
+    if (!target) return;
     const angleOffset = Math.random() * Math.PI * 2;
     for (let i = 0; i < count; i++) {
       const angle = angleOffset + (i / count) * Math.PI * 2;
       const speed = mine.scatterMineSpeed || 260;
       const travelTime = mine.scatterMineTravelTime || 0.28;
-      this.P._pulseMines.push({
+      target.push({
         x: mine.x,
         y: mine.y,
         r: mine.scatterMineTriggerRadius || 12,
@@ -1567,7 +1570,7 @@ export class Game {
     });
   }
 
-  triggerMineExplosion(mine) {
+  triggerMineExplosion(mine, spawnedMines = null) {
     const blastR = mine.blastRadius || 120;
     enemies.forEach(e => {
       if (Math.hypot(e.x - mine.x, e.y - mine.y) < blastR) {
@@ -1590,7 +1593,7 @@ export class Game {
         maxLife: 2.0,
       });
     }
-    this._spawnScatterMines(mine);
+    this._spawnScatterMines(mine, spawnedMines);
     addRing(mine.x, mine.y, blastR, mine.col, 2.5, 0.4);
     addBurst(mine.x, mine.y, mine.col, 16, 150, 3, 0.5);
   }
@@ -1884,7 +1887,10 @@ export class Game {
           if (hasAscension(P, 'cryo', 'permafrost')) playPermafrostFire();
           else playCryoFire();
         }
-        else if (wid === 'pulse') playPulseFire();
+        else if (wid === 'pulse') {
+          if (getAscension(P, 'pulse') === 'proximity_mine') playPulseMineArmSound();
+          else playPulseFire();
+        }
         else if (wid === 'emp' && empAscension !== 'triple_pulse') playEMPSound();
       }
       w.tick?.(P, dt, onHit, {

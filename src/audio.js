@@ -156,6 +156,14 @@ export function playPulseFire() {
   osc('sine', 160, 0.18, 0.003, 0.08, 85);
 }
 
+export function playPulseMineArmSound() {
+  // soft mechanical arm click with a descending warning chirp
+  noiseShot(0.065, 0.001, 0.03, 'bandpass', 1800, 8);
+  osc('square', 520, 0.055, 0.002, 0.04, 430);
+  osc('triangle', 170, 0.075, 0.003, 0.11, 110);
+  oscAt(0.05, 'sine', 780, 0.035, 0.002, 0.08);
+}
+
 export function playEMPSound() {
   noiseShot(0.2, 0.002, 0.08, 'bandpass', 1600, 3.5);
   osc('triangle', 320, 0.18, 0.003, 0.12, 120);
