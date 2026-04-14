@@ -1536,11 +1536,14 @@ export class Game {
     if (count <= 0 || mine.isScatterMine) return;
     const target = out || this.P?._pulseMines;
     if (!target) return;
-    const angleOffset = Math.random() * Math.PI * 2;
+    const speedMin = Math.max(0, mine.scatterMineSpeedMin || mine.scatterMineSpeed || 360);
+    const speedMax = Math.max(speedMin, mine.scatterMineSpeedMax || mine.scatterMineSpeed || speedMin);
+    const timeMin = Math.max(0.05, mine.scatterMineTravelTimeMin || mine.scatterMineTravelTime || 0.42);
+    const timeMax = Math.max(timeMin, mine.scatterMineTravelTimeMax || mine.scatterMineTravelTime || timeMin);
     for (let i = 0; i < count; i++) {
-      const angle = angleOffset + (i / count) * Math.PI * 2;
-      const speed = mine.scatterMineSpeed || 260;
-      const travelTime = mine.scatterMineTravelTime || 0.28;
+      const angle = Math.random() * Math.PI * 2;
+      const speed = speedMin + Math.random() * (speedMax - speedMin);
+      const travelTime = timeMin + Math.random() * (timeMax - timeMin);
       target.push({
         x: mine.x,
         y: mine.y,
